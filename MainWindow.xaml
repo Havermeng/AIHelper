@@ -1,0 +1,1366 @@
+<Window x:Class="LaptopSessionViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:local="clr-namespace:LaptopSessionViewer"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="{Binding Strings[AppTitle]}"
+        Icon="Assets/AIHelper.ico"
+        Width="1360"
+        Height="740"
+        MinWidth="1180"
+        MinHeight="640"
+        WindowStartupLocation="CenterScreen"
+        Background="#F4EFE6"
+        FontFamily="Bahnschrift">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <local:BindingProxy x:Key="ViewModelProxy"
+                            Data="{Binding RelativeSource={RelativeSource AncestorType=Window}}" />
+
+        <Style x:Key="MetricCardStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="8,7" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Background" Value="#1D3545" />
+            <Setter Property="Height" Value="56" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Foreground" Value="#FFFDF9" />
+            <Setter Property="Background" Value="#D97732" />
+            <Setter Property="BorderBrush" Value="#D97732" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="TextBlock.TextAlignment" Value="Center" />
+            <Setter Property="TextBlock.TextWrapping" Value="Wrap" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="14"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#EA8C49" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.6" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="#FFFDF9" />
+            <Setter Property="Foreground" Value="#16212B" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#FFFDF9" />
+                    <Setter Property="Foreground" Value="#667085" />
+                    <Setter Property="Opacity" Value="1" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Background" Value="#FFFDF9" />
+            <Setter Property="Foreground" Value="#16212B" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#FFFDF9" />
+                    <Setter Property="Foreground" Value="#667085" />
+                    <Setter Property="Opacity" Value="1" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SidebarComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="MinHeight" Value="30" />
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
+
+        <Style x:Key="PassiveComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Style.Triggers>
+                <Trigger Property="IsHitTestVisible" Value="False">
+                    <Setter Property="Foreground" Value="#667085" />
+                    <Setter Property="Opacity" Value="1" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SideNavButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                CornerRadius="16">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#16212B" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Margin" Value="0,0,18,10" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SessionTabButtonStyle" TargetType="Button">
+            <Setter Property="MinWidth" Value="128" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+
+        <Style x:Key="ActionButtonStyle" TargetType="Button">
+            <Setter Property="MinWidth" Value="156" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Padding" Value="8,5" />
+        </Style>
+
+        <Style x:Key="DnsMiniButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinWidth" Value="104" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DnsActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Padding" Value="8,7" />
+            <Setter Property="MinHeight" Value="46" />
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </DataTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="#FFFDF9" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="RowBackground" Value="#FFFDF9" />
+            <Setter Property="AlternatingRowBackground" Value="#F7F3EC" />
+            <Setter Property="GridLinesVisibility" Value="None" />
+            <Setter Property="HeadersVisibility" Value="Column" />
+            <Setter Property="CanUserAddRows" Value="False" />
+            <Setter Property="CanUserDeleteRows" Value="False" />
+            <Setter Property="CanUserResizeRows" Value="False" />
+            <Setter Property="AutoGenerateColumns" Value="False" />
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="SelectionMode" Value="Single" />
+            <Setter Property="SelectionUnit" Value="FullRow" />
+            <Setter Property="RowHeight" Value="76" />
+            <Setter Property="ColumnHeaderHeight" Value="48" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#ECDED0" />
+            <Setter Property="Foreground" Value="#16212B" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="BorderThickness" Value="0" />
+        </Style>
+
+        <Style TargetType="DataGridRow">
+            <Setter Property="Foreground" Value="#16212B" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#FDE6D3" />
+                    <Setter Property="Foreground" Value="#16212B" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="190" />
+            <ColumnDefinition Width="12" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0"
+                Padding="16"
+                CornerRadius="24"
+                Background="#16212B">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="18" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel>
+                    <TextBlock FontSize="26"
+                               FontWeight="Bold"
+                               Foreground="#FFFDF9"
+                               Text="{Binding Strings[AppTitle]}" />
+                    <TextBlock Margin="0,6,0,0"
+                               FontSize="11"
+                               Foreground="#B7D0DA"
+                               TextWrapping="Wrap"
+                               Text="{Binding Strings[SidebarSubtitle]}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="2">
+                    <Button Style="{StaticResource SideNavButtonStyle}"
+                            Click="SessionsSectionButton_Click"
+                            Background="{Binding SessionsSectionButtonBackground}"
+                            BorderBrush="{Binding SessionsSectionButtonBackground}"
+                            Foreground="{Binding SessionsSectionButtonForeground}"
+                            Content="{Binding Strings[SectionSessionsNav]}" />
+                    <Button Style="{StaticResource SideNavButtonStyle}"
+                            Click="NewSessionSectionButton_Click"
+                            Background="{Binding NewSessionSectionButtonBackground}"
+                            BorderBrush="{Binding NewSessionSectionButtonBackground}"
+                            Foreground="{Binding NewSessionSectionButtonForeground}"
+                            Content="{Binding Strings[SectionNewSessionNav]}" />
+                    <Button Style="{StaticResource SideNavButtonStyle}"
+                            Margin="0"
+                            Click="SetupSectionButton_Click"
+                            Background="{Binding SetupSectionButtonBackground}"
+                            BorderBrush="{Binding SetupSectionButtonBackground}"
+                            Foreground="{Binding SetupSectionButtonForeground}"
+                            Content="{Binding Strings[SectionSetupNav]}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="4">
+                    <TextBlock FontSize="10.5"
+                               Foreground="#FFFDF9"
+                               Text="{Binding Strings[LanguageLabel]}" />
+                    <ComboBox Margin="0,6,0,0"
+                              Style="{StaticResource SidebarComboBoxStyle}"
+                              ItemsSource="{Binding LanguageOptions}"
+                              SelectedItem="{Binding SelectedLanguageOption, Mode=TwoWay}"
+                              DisplayMemberPath="DisplayName" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Column="2">
+            <Grid Visibility="{Binding SessionsSectionVisibility}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="16" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Padding="12"
+                CornerRadius="18">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Color="#132734" Offset="0" />
+                    <GradientStop Color="#274552" Offset="0.65" />
+                    <GradientStop Color="#D97732" Offset="1" />
+                </LinearGradientBrush>
+            </Border.Background>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="6" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="6" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="280" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel>
+                        <TextBlock FontSize="22"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[HeroTitle]}" />
+                        <TextBlock Margin="0,4,0,0"
+                                   FontSize="11"
+                                   Foreground="#F8E7D6"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Strings[HeroSubtitle]}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1"
+                                HorizontalAlignment="Right">
+                        <TextBlock Margin="2,0,0,3"
+                                   FontSize="12"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[SearchLabel]}" />
+                        <TextBox Width="280"
+                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Margin="2,2,0,0"
+                                   FontSize="9"
+                                   Foreground="#F8E7D6"
+                                   TextTrimming="CharacterEllipsis"
+                                   Text="{Binding Strings[SearchHelp]}" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource MetricCardStyle}">
+                            <StackPanel>
+                                <TextBlock FontSize="9"
+                                           Foreground="#B7D0DA"
+                                           Text="{Binding Strings[MetricTotalSessions]}" />
+                                <TextBlock Margin="0,2,0,0"
+                                           FontSize="16"
+                                           FontWeight="Bold"
+                                           Foreground="#FFFDF9"
+                                           Text="{Binding TotalSessions}" />
+                            </StackPanel>
+                        </Border>
+
+                    <Border Grid.Column="1" Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock FontSize="9"
+                                       Foreground="#B7D0DA"
+                                       Text="{Binding Strings[MetricFavorites]}" />
+                            <TextBlock Margin="0,2,0,0"
+                                       FontSize="16"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFDF9"
+                                       Text="{Binding FavoriteSessions}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock FontSize="9"
+                                       Foreground="#B7D0DA"
+                                       Text="{Binding Strings[MetricUpdatedToday]}" />
+                            <TextBlock Margin="0,2,0,0"
+                                       FontSize="16"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFDF9"
+                                       Text="{Binding UpdatedTodaySessions}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="3"
+                            Margin="0"
+                            Style="{StaticResource MetricCardStyle}">
+                        <StackPanel>
+                            <TextBlock FontSize="9"
+                                       Foreground="#B7D0DA"
+                                       Text="{Binding Strings[MetricMessages]}" />
+                            <TextBlock Margin="0,2,0,0"
+                                       FontSize="16"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFDF9"
+                                       Text="{Binding TotalMessages}" />
+                        </StackPanel>
+                    </Border>
+                    </Grid>
+
+                    <Grid Grid.Column="1"
+                          Margin="10,0,0,0"
+                          HorizontalAlignment="Right">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="156" />
+                            <ColumnDefinition Width="4" />
+                            <ColumnDefinition Width="156" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="4" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="4" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Button Grid.Row="0"
+                                Grid.Column="0"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Click="RefreshButton_Click"
+                                IsEnabled="{Binding IsRefreshAvailable}"
+                                Content="{Binding Strings[Refresh]}" />
+                        <Button Grid.Row="0"
+                                Grid.Column="2"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Click="OpenSessionsFolderButton_Click"
+                                Content="{Binding Strings[OpenSessionsFolder]}" />
+                        <Button Grid.Row="2"
+                                Grid.Column="0"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Click="ResumeSelectedSessionButton_Click"
+                                IsEnabled="{Binding CanResumeSelectedSession}"
+                                Content="{Binding Strings[ResumeInTerminal]}" />
+                        <Button Grid.Row="2"
+                                Grid.Column="2"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Click="ToggleFavoriteButton_Click"
+                                Content="{Binding FavoriteButtonText}" />
+                        <Button Grid.Row="4"
+                                Grid.Column="0"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Click="OpenSelectedFileButton_Click"
+                                IsEnabled="{Binding CanOpenSelectedFile}"
+                                Content="{Binding Strings[OpenSessionFile]}" />
+                        <Button Grid.Row="4"
+                                Grid.Column="2"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Click="DeleteSelectedSessionButton_Click"
+                                IsEnabled="{Binding CanDeleteSelectedSession}"
+                                Background="#B42318"
+                                BorderBrush="#B42318"
+                                Content="{Binding Strings[DeleteSession]}" />
+                    </Grid>
+                </Grid>
+
+                <Grid Grid.Row="4"
+                      Margin="0,2,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock FontSize="10"
+                               Foreground="{Binding StatusForeground}"
+                               Text="{Binding StatusText}" />
+
+                    <ProgressBar Grid.Column="2"
+                                 Width="110"
+                                 Height="6"
+                                 IsIndeterminate="True"
+                                 Visibility="{Binding IsLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                    <TextBlock Grid.Column="3"
+                               VerticalAlignment="Center"
+                               FontSize="10"
+                               Foreground="#F8E7D6"
+                               HorizontalAlignment="Right"
+                               Text="{Binding LastUpdatedText}" />
+                </Grid>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="340" />
+            </Grid.ColumnDefinitions>
+
+            <Border Background="#FFFDF9"
+                    CornerRadius="28"
+                    Padding="18">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="14" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource SessionTabButtonStyle}"
+                                Click="SessionsTabButton_Click"
+                                Background="{Binding SessionsTabBackground}"
+                                BorderBrush="{Binding SessionsTabBackground}"
+                                Foreground="{Binding SessionsTabForeground}"
+                                Content="{Binding SessionsTabText}" />
+                        <Button Style="{StaticResource SessionTabButtonStyle}"
+                                Margin="0"
+                                Click="FavoritesTabButton_Click"
+                                Background="{Binding FavoritesTabBackground}"
+                                BorderBrush="{Binding FavoritesTabBackground}"
+                                Foreground="{Binding FavoritesTabForeground}"
+                                Content="{Binding FavoritesTabText}" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
+                        <DataGrid ItemsSource="{Binding Sessions}"
+                                  SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="*"
+                                                        Header="{Binding Data.Strings[GridSession], Source={StaticResource ViewModelProxy}}">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,6,0,0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock FontWeight="SemiBold"
+                                                               Text="{Binding Title}" />
+                                                    <Border Margin="8,0,0,0"
+                                                            Padding="8,2"
+                                                            CornerRadius="10"
+                                                            Background="#FDE8C8"
+                                                            Visibility="{Binding IsFavorite, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <TextBlock FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#9A5A00"
+                                                                   Text="{Binding FavoriteBadgeText}" />
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Margin="0,6,0,0"
+                                                           FontSize="12"
+                                                           Foreground="#667085"
+                                                           Text="{Binding ShortSessionId}" />
+                                                <TextBlock Margin="0,2,0,0"
+                                                           FontSize="12"
+                                                           Foreground="#667085"
+                                                           Text="{Binding Preview}" />
+                                                <Border Margin="0,6,0,0"
+                                                        Padding="8,4"
+                                                        CornerRadius="10"
+                                                        Background="#F3E8D8"
+                                                        Visibility="{Binding HasNote, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <TextBlock FontSize="11"
+                                                               Foreground="#7A4B1F"
+                                                               Text="{Binding NotePreview}" />
+                                                </Border>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Width="150"
+                                                    Binding="{Binding UpdatedAtText}"
+                                                    Header="{Binding Data.Strings[GridUpdated], Source={StaticResource ViewModelProxy}}" />
+                                <DataGridTextColumn Width="78"
+                                                    Binding="{Binding TotalMessageCount}"
+                                                    Header="{Binding Data.Strings[GridMessages], Source={StaticResource ViewModelProxy}}" />
+                                <DataGridTextColumn Width="78"
+                                                    Binding="{Binding ToolCallCount}"
+                                                    Header="{Binding Data.Strings[GridTools], Source={StaticResource ViewModelProxy}}" />
+                                <DataGridTextColumn Width="92"
+                                                    Binding="{Binding ModelProvider}"
+                                                    Header="{Binding Data.Strings[GridModel], Source={StaticResource ViewModelProxy}}" />
+                                <DataGridTextColumn Width="92"
+                                                    Binding="{Binding Source}"
+                                                    Header="{Binding Data.Strings[GridSource], Source={StaticResource ViewModelProxy}}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <TextBlock HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="#475467"
+                                   Text="{Binding EmptySessionsText}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasVisibleSessions}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <Border Grid.Column="2"
+                    Background="#16212B"
+                    CornerRadius="28"
+                    Padding="18">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock FontSize="22"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFDF9"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding SelectedSessionTitleText}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   FontSize="13"
+                                   Foreground="#C3D2DC"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding SelectedSessionPreviewText}" />
+
+                        <Border Margin="0,20,0,0"
+                                Background="#203240"
+                                CornerRadius="18"
+                                Padding="14">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="118" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Foreground="#9AB0BE" Text="{Binding Strings[DetailSessionId]}" />
+                                <TextBlock Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.SessionId, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="1" Foreground="#9AB0BE" Text="{Binding Strings[DetailStarted]}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.StartedAtText, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="2" Foreground="#9AB0BE" Text="{Binding Strings[DetailUpdated]}" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.UpdatedAtText, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="3" Foreground="#9AB0BE" Text="{Binding Strings[DetailDuration]}" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.DurationText, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="4" Foreground="#9AB0BE" Text="{Binding Strings[DetailMessages]}" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.TotalMessageCount, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="5" Foreground="#9AB0BE" Text="{Binding Strings[DetailToolCalls]}" />
+                                <TextBlock Grid.Row="5" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.ToolCallCount, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="6" Foreground="#9AB0BE" Text="{Binding Strings[DetailModel]}" />
+                                <TextBlock Grid.Row="6" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.ModelProvider, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="7" Foreground="#9AB0BE" Text="{Binding Strings[DetailSource]}" />
+                                <TextBlock Grid.Row="7" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.Source, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="8" Foreground="#9AB0BE" Text="{Binding Strings[DetailCliVersion]}" />
+                                <TextBlock Grid.Row="8" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.CliVersion, TargetNullValue=-}" />
+
+                                <TextBlock Grid.Row="9" Foreground="#9AB0BE" Text="{Binding Strings[DetailCwd]}" />
+                                <TextBlock Grid.Row="9"
+                                           Grid.Column="1"
+                                           Foreground="#FFFDF9"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SelectedSession.WorkingDirectory, TargetNullValue=-}" />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock Margin="0,18,0,0"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[DetailFavorite]}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Foreground="#C3D2DC"
+                                   Text="{Binding SelectedSessionFavoriteText}" />
+
+                        <TextBlock Margin="0,18,0,0"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[DetailNotes]}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Foreground="#C3D2DC"
+                                   Text="{Binding Strings[NotesHint]}" />
+                        <TextBox Margin="0,10,0,0"
+                                 MinHeight="120"
+                                 AcceptsReturn="True"
+                                 IsEnabled="{Binding CanEditSelectedSessionNote}"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 Background="#FFFDF9"
+                                 Foreground="#16212B"
+                                 Text="{Binding SelectedSessionNote, UpdateSourceTrigger=PropertyChanged}" />
+                        <StackPanel Margin="0,10,0,0"
+                                    Orientation="Horizontal">
+                            <Button Width="108"
+                                    Click="SaveSelectedNoteButton_Click"
+                                    IsEnabled="{Binding CanSaveSelectedSessionNote}"
+                                    Content="{Binding Strings[SaveNote]}" />
+                            <Button Width="108"
+                                    Margin="10,0,0,0"
+                                    Click="ClearSelectedNoteButton_Click"
+                                    IsEnabled="{Binding CanClearSelectedSessionNote}"
+                                    Background="#475467"
+                                    BorderBrush="#475467"
+                                    Content="{Binding Strings[ClearNote]}" />
+                        </StackPanel>
+
+                        <TextBlock Margin="0,18,0,0"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[DetailSessionFile]}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Foreground="#C3D2DC"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding SelectedSession.RelativePath, TargetNullValue=-}" />
+
+                        <TextBlock Margin="0,18,0,0"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[DetailLastMessage]}" />
+                        <TextBlock Margin="0,8,0,0"
+                                   Foreground="#C3D2DC"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding SelectedSession.LastMessagePreview, TargetNullValue=-}" />
+
+                        <TextBlock Margin="0,18,0,0"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[DetailTranscript]}" />
+                        <TextBox Margin="0,10,0,0"
+                                 MinHeight="340"
+                                 AcceptsReturn="True"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 FontFamily="Consolas"
+                                 Background="#0F1720"
+                                 Foreground="#E9EEF2"
+                                 Text="{Binding SelectedSessionTranscriptText, Mode=OneWay}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+    </Grid>
+
+            <Grid Visibility="{Binding NewSessionSectionVisibility}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="16" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0"
+                        Padding="18"
+                        CornerRadius="24">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#132734" Offset="0" />
+                            <GradientStop Color="#274552" Offset="0.65" />
+                            <GradientStop Color="#D97732" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+
+                    <StackPanel>
+                        <TextBlock FontSize="24"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[NewSessionTitle]}" />
+                        <TextBlock Margin="0,6,0,0"
+                                   FontSize="12"
+                                   Foreground="#F8E7D6"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Strings[NewSessionSubtitle]}" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="350" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Background="#F7F3EC"
+                            CornerRadius="28"
+                            Padding="20">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#16212B"
+                                           Text="{Binding Strings[NewSessionPromptLabel]}" />
+                                <TextBox Margin="0,10,0,0"
+                                         MinHeight="110"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Disabled"
+                                         Text="{Binding NewSessionPrompt, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Margin="2,8,0,0"
+                                           FontSize="12"
+                                           Foreground="#667085"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding NewSessionPromptHelpText}" />
+
+                                <TextBlock Margin="0,18,0,0"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#16212B"
+                                           Text="{Binding Strings[NewSessionWorkingDirectoryLabel]}" />
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Text="{Binding NewSessionWorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                                    <Button Grid.Column="2"
+                                            Width="184"
+                                            Click="UseSelectedSessionDirectoryButton_Click"
+                                            IsEnabled="{Binding CanUseSelectedSessionDirectory}"
+                                            Content="{Binding Strings[NewSessionUseSelectedDirectory]}" />
+                                </Grid>
+                                <TextBlock Margin="2,8,0,0"
+                                           FontSize="12"
+                                           Foreground="#667085"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding NewSessionWorkingDirectoryHelpText}" />
+
+                                <Grid Margin="0,18,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="16" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel>
+                                        <TextBlock FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#16212B"
+                                                   Text="{Binding Strings[NewSessionModelLabel]}" />
+                                        <ComboBox Margin="0,10,0,0"
+                                                  IsEditable="True"
+                                                  IsTextSearchEnabled="False"
+                                                  ItemsSource="{Binding ModelSuggestions}"
+                                                  Text="{Binding NewSessionModel, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Margin="2,8,0,0"
+                                                   FontSize="12"
+                                                   Foreground="#667085"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding NewSessionModelHelpText}" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#16212B"
+                                                   Text="{Binding Strings[NewSessionProfileLabel]}" />
+                                        <ComboBox Margin="0,10,0,0"
+                                                  IsEditable="True"
+                                                  IsTextSearchEnabled="False"
+                                                  ItemsSource="{Binding ProfileSuggestions}"
+                                                  Text="{Binding NewSessionProfile, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Margin="2,8,0,0"
+                                                   FontSize="12"
+                                                   Foreground="#667085"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding NewSessionProfileHelpText}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid Margin="0,18,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="16" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <StackPanel>
+                                        <TextBlock FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#16212B"
+                                                   Text="{Binding Strings[NewSessionSandboxLabel]}" />
+                                        <ComboBox Margin="0,10,0,0"
+                                                  Style="{StaticResource PassiveComboBoxStyle}"
+                                                  IsHitTestVisible="{Binding IsManualLaunchMode}"
+                                                  Focusable="{Binding IsManualLaunchMode}"
+                                                  IsTabStop="{Binding IsManualLaunchMode}"
+                                                  ItemsSource="{Binding SandboxModeOptions}"
+                                                  DisplayMemberPath="DisplayName"
+                                                  SelectedValuePath="Value"
+                                                  SelectedValue="{Binding SelectedSandboxMode, Mode=TwoWay}" />
+                                        <TextBlock Margin="2,8,0,0"
+                                                   FontSize="12"
+                                                   Foreground="#667085"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding NewSessionSandboxHelpText}" />
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#16212B"
+                                                   Text="{Binding Strings[NewSessionApprovalLabel]}" />
+                                        <ComboBox Margin="0,10,0,0"
+                                                  Style="{StaticResource PassiveComboBoxStyle}"
+                                                  IsHitTestVisible="{Binding IsManualLaunchMode}"
+                                                  Focusable="{Binding IsManualLaunchMode}"
+                                                  IsTabStop="{Binding IsManualLaunchMode}"
+                                                  ItemsSource="{Binding ApprovalPolicyOptions}"
+                                                  DisplayMemberPath="DisplayName"
+                                                  SelectedValuePath="Value"
+                                                  SelectedValue="{Binding SelectedApprovalPolicy, Mode=TwoWay}" />
+                                        <TextBlock Margin="2,8,0,0"
+                                                   FontSize="12"
+                                                   Foreground="#667085"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding NewSessionApprovalHelpText}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Margin="0,18,0,0"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#16212B"
+                                           Text="{Binding Strings[NewSessionLocalProviderLabel]}" />
+                                <ComboBox Margin="0,10,0,0"
+                                          Style="{StaticResource PassiveComboBoxStyle}"
+                                          IsHitTestVisible="{Binding NewSessionUseOss}"
+                                          Focusable="{Binding NewSessionUseOss}"
+                                          IsTabStop="{Binding NewSessionUseOss}"
+                                          ItemsSource="{Binding LocalProviderOptions}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValuePath="Value"
+                                          SelectedValue="{Binding SelectedLocalProvider, Mode=TwoWay}" />
+                                <TextBlock Margin="2,8,0,0"
+                                           FontSize="12"
+                                           Foreground="#667085"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding NewSessionLocalProviderHelpText}" />
+
+                                <Border Margin="0,20,0,0"
+                                        Padding="12,10,12,2"
+                                        CornerRadius="18"
+                                        Background="#FFFDF9">
+                                    <WrapPanel>
+                                        <CheckBox IsChecked="{Binding NewSessionUseSearch, Mode=TwoWay}"
+                                                  Content="{Binding Strings[NewSessionSearchToggle]}" />
+                                        <CheckBox IsChecked="{Binding NewSessionUseOss, Mode=TwoWay}"
+                                                  Content="{Binding Strings[NewSessionOssToggle]}" />
+                                        <CheckBox IsChecked="{Binding NewSessionUseFullAuto, Mode=TwoWay}"
+                                                  Content="{Binding Strings[NewSessionFullAutoToggle]}" />
+                                    </WrapPanel>
+                                </Border>
+                                <TextBlock Margin="2,0,0,0"
+                                           FontSize="12"
+                                           Foreground="#667085"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding NewSessionFlagsHelpText}" />
+
+                                <Button Margin="0,18,0,0"
+                                        Height="42"
+                                        Click="LaunchNewSessionButton_Click"
+                                        IsEnabled="{Binding CanLaunchNewSession}"
+                                        Content="{Binding Strings[NewSessionLaunchButton]}" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+
+                    <Border Grid.Column="2"
+                            Background="#16212B"
+                            CornerRadius="28"
+                            Padding="20">
+                        <StackPanel>
+                            <TextBlock FontSize="18"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFDF9"
+                                       Text="{Binding Strings[NewSessionPreviewTitle]}" />
+                            <TextBox Margin="0,12,0,0"
+                                     MinHeight="150"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     AcceptsReturn="True"
+                                     FontFamily="Consolas"
+                                     Background="#0F1720"
+                                     Foreground="#E9EEF2"
+                                     Text="{Binding NewSessionPreviewCommandText, Mode=OneWay}" />
+                            <TextBlock Margin="0,8,0,0"
+                                       FontSize="12"
+                                       Foreground="#C3D2DC"
+                                       TextWrapping="Wrap"
+                                       Text="{Binding NewSessionPreviewHelpText}" />
+
+                            <TextBlock Margin="0,18,0,0"
+                                       FontSize="18"
+                                       FontWeight="Bold"
+                                       Foreground="#FFFDF9"
+                                       Text="{Binding Strings[NewSessionHelpTitle]}" />
+                            <TextBlock Margin="0,10,0,0"
+                                       Foreground="#C3D2DC"
+                                       TextWrapping="Wrap"
+                                       Text="{Binding Strings[NewSessionHelpText]}" />
+
+                            <Border Margin="0,18,0,0"
+                                    Padding="14"
+                                    CornerRadius="18"
+                                    Background="#203240">
+                                <TextBlock Foreground="{Binding NewSessionStatusForeground}"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding NewSessionStatusText}" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <Grid Visibility="{Binding SetupSectionVisibility}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="16" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0"
+                        Padding="18"
+                        CornerRadius="24">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#132734" Offset="0" />
+                            <GradientStop Color="#274552" Offset="0.65" />
+                            <GradientStop Color="#D97732" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+
+                    <StackPanel>
+                        <TextBlock FontSize="24"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[SetupTitle]}" />
+                        <TextBlock Margin="0,6,0,0"
+                                   FontSize="12"
+                                   Foreground="#F8E7D6"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Strings[SetupSubtitle]}" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="370" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Background="#FFFDF9"
+                            CornerRadius="28"
+                            Padding="20">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="12" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="14" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <TextBlock FontSize="18"
+                                       FontWeight="Bold"
+                                       Foreground="#16212B"
+                                       Text="{Binding Strings[SetupEnvironmentTitle]}" />
+                            <TextBlock Grid.Row="2"
+                                       Foreground="#475467"
+                                       TextWrapping="Wrap"
+                                       Text="{Binding Strings[SetupEnvironmentSubtitle]}" />
+
+                            <ScrollViewer Grid.Row="4"
+                                          VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding SetupChecks}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="0,0,0,12"
+                                                    Padding="14"
+                                                    CornerRadius="18"
+                                                    Background="#F7F3EC">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <StackPanel>
+                                                        <TextBlock FontSize="14"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#16212B"
+                                                                   Text="{Binding Title}" />
+                                                        <TextBlock Margin="0,6,0,0"
+                                                                   Foreground="#475467"
+                                                                   TextWrapping="Wrap"
+                                                                   Text="{Binding Detail}" />
+                                                    </StackPanel>
+
+                                                    <Border Grid.Column="1"
+                                                            Margin="12,0,0,0"
+                                                            Padding="10,4"
+                                                            CornerRadius="12"
+                                                            Background="{Binding AccentBrush}">
+                                                        <TextBlock FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   Foreground="#FFFDF9"
+                                                                   Text="{Binding Status}" />
+                                                    </Border>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Column="2"
+                            Background="#16212B"
+                            CornerRadius="28"
+                            Padding="20">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock FontSize="18"
+                                           FontWeight="Bold"
+                                           Foreground="#FFFDF9"
+                                           Text="{Binding Strings[SetupActionsTitle]}" />
+
+                                <Button Margin="0,14,0,0"
+                                        Click="RefreshSetupStatusButton_Click"
+                                        Content="{Binding Strings[SetupRefreshButton]}" />
+                                <Button Margin="0,10,0,0"
+                                        Click="InstallCodexStackButton_Click"
+                                        Content="{Binding Strings[SetupInstallStackButton]}" />
+                                <Button Margin="0,10,0,0"
+                                        Click="LaunchCodexLoginButton_Click"
+                                        IsEnabled="{Binding CanLaunchCodexLogin}"
+                                        Content="{Binding Strings[SetupLoginButton]}" />
+                                <Button Margin="0,10,0,0"
+                                        Click="OpenCodexHomeButton_Click"
+                                        Content="{Binding Strings[SetupOpenCodexHome]}" />
+                                <Button Margin="0,10,0,0"
+                                        Click="OpenSessionsFolderButton_Click"
+                                        Content="{Binding Strings[OpenSessionsFolder]}" />
+
+                                <ProgressBar Margin="0,16,0,0"
+                                             Height="8"
+                                             IsIndeterminate="True"
+                                             Visibility="{Binding IsSetupBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <TextBlock Margin="0,12,0,0"
+                                           Foreground="{Binding SetupStatusForeground}"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SetupStatusText}" />
+
+                                <TextBlock Margin="0,22,0,0"
+                                           FontSize="18"
+                                           FontWeight="Bold"
+                                           Foreground="#FFFDF9"
+                                           Text="{Binding Strings[SetupInstallNoteTitle]}" />
+                                <TextBlock Margin="0,10,0,0"
+                                           Foreground="#C3D2DC"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding Strings[SetupInstallNote]}" />
+
+                                <Border Margin="0,22,0,0"
+                                        Padding="16"
+                                        CornerRadius="22"
+                                        Background="#203543">
+                                    <StackPanel>
+                                        <TextBlock FontSize="18"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[DnsTitle]}" />
+
+                                        <TextBlock Margin="0,16,0,0"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[DnsAdapterLabel]}" />
+                                        <ComboBox Margin="0,8,0,0"
+                                                  ItemsSource="{Binding DnsAdapters}"
+                                                  SelectedItem="{Binding SelectedDnsAdapter, Mode=TwoWay}"
+                                                  DisplayMemberPath="DisplayName" />
+
+                                        <TextBlock Margin="0,16,0,0"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[DnsCurrentServersLabel]}" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Foreground="#C3D2DC"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding SelectedDnsAdapterServersText}" />
+
+                                        <TextBlock Margin="0,16,0,0"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[DnsPresetLabel]}" />
+                                        <ComboBox Margin="0,8,0,0"
+                                                  ItemsSource="{Binding DnsPresets}"
+                                                  SelectedItem="{Binding SelectedDnsPreset, Mode=TwoWay}"
+                                                  DisplayMemberPath="Name" />
+                                        <TextBlock Margin="0,8,0,0"
+                                                   Foreground="#9FB7C5"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding SelectedDnsPresetDescriptionText}" />
+
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <Button Style="{StaticResource DnsMiniButtonStyle}"
+                                                    Click="AddDnsPresetButton_Click"
+                                                    Content="{Binding Strings[DnsAddPresetButton]}" />
+                                            <Button Style="{StaticResource DnsMiniButtonStyle}"
+                                                    Click="EditDnsPresetButton_Click"
+                                                    IsEnabled="{Binding CanEditSelectedDnsPreset}"
+                                                    Content="{Binding Strings[DnsEditPresetButton]}" />
+                                            <Button Style="{StaticResource DnsMiniButtonStyle}"
+                                                    Click="DuplicateDnsPresetButton_Click"
+                                                    Content="{Binding Strings[DnsDuplicatePresetButton]}" />
+                                            <Button Style="{StaticResource DnsMiniButtonStyle}"
+                                                    Click="DeleteDnsPresetButton_Click"
+                                                    IsEnabled="{Binding CanDeleteSelectedDnsPreset}"
+                                                    Content="{Binding Strings[DnsDeletePresetButton]}" />
+                                            <Button Style="{StaticResource DnsMiniButtonStyle}"
+                                                    Click="ImportDnsPresetsButton_Click"
+                                                    Content="{Binding Strings[DnsImportButton]}" />
+                                            <Button Style="{StaticResource DnsMiniButtonStyle}"
+                                                    Click="ExportDnsPresetsButton_Click"
+                                                    Content="{Binding Strings[DnsExportButton]}" />
+                                        </WrapPanel>
+
+                                        <Grid Margin="0,16,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="10" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel>
+                                                <TextBlock FontSize="12"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#FFFDF9"
+                                                           Text="{Binding Strings[DnsPrimaryLabel]}" />
+                                                <TextBox Margin="0,8,0,0"
+                                                         IsEnabled="{Binding CanEditDnsFields}"
+                                                         Text="{Binding PrimaryDnsServer, UpdateSourceTrigger=PropertyChanged}" />
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock FontSize="12"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#FFFDF9"
+                                                           Text="{Binding Strings[DnsSecondaryLabel]}" />
+                                                <TextBox Margin="0,8,0,0"
+                                                         IsEnabled="{Binding CanEditDnsFields}"
+                                                         Text="{Binding SecondaryDnsServer, UpdateSourceTrigger=PropertyChanged}" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <CheckBox Margin="0,14,0,0"
+                                                  Foreground="#FFFDF9"
+                                                  IsChecked="{Binding DnsUseDoh, Mode=TwoWay}"
+                                                  Content="{Binding Strings[DnsUseDohLabel]}" />
+
+                                        <StackPanel Margin="0,4,0,0"
+                                                    Visibility="{Binding DnsDohTemplateVisibility}">
+                                            <TextBlock FontSize="12"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#FFFDF9"
+                                                       Text="{Binding Strings[DnsDohTemplateLabel]}" />
+                                            <TextBox Margin="0,8,0,0"
+                                                     Text="{Binding DnsDohTemplate, UpdateSourceTrigger=PropertyChanged}" />
+                                        </StackPanel>
+
+                                        <Grid Margin="0,16,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="10" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="10" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <Button Grid.Column="0"
+                                                    Style="{StaticResource DnsActionButtonStyle}"
+                                                    Click="ApplySelectedDnsPresetButton_Click"
+                                                    IsEnabled="{Binding CanApplyDnsPreset}"
+                                                    Content="{Binding Strings[DnsApplySelectedPresetButton]}" />
+                                            <Button Grid.Column="2"
+                                                    Style="{StaticResource DnsActionButtonStyle}"
+                                                    Click="ResetAutomaticDnsButton_Click"
+                                                    IsEnabled="{Binding CanResetDnsAutomatic}"
+                                                    Content="{Binding Strings[DnsResetButton]}" />
+                                            <Button Grid.Column="4"
+                                                    Style="{StaticResource DnsActionButtonStyle}"
+                                                    Click="RefreshDnsAdaptersButton_Click"
+                                                    IsEnabled="{Binding CanRefreshDnsAdapters}"
+                                                    Content="{Binding Strings[DnsRefreshButton]}" />
+                                        </Grid>
+
+                                        <Button Margin="0,10,0,0"
+                                                Style="{StaticResource DnsActionButtonStyle}"
+                                                Click="RestoreDnsBackupButton_Click"
+                                                IsEnabled="{Binding CanRestorePreviousDns}"
+                                                Content="{Binding Strings[DnsRestoreButton]}" />
+
+                                        <ProgressBar Margin="0,16,0,0"
+                                                     Height="8"
+                                                     IsIndeterminate="True"
+                                                     Visibility="{Binding IsDnsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBlock Margin="0,12,0,0"
+                                                   Foreground="{Binding DnsStatusForeground}"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding DnsStatusText}" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </Grid>
+    </Grid>
+</Grid>
+</Window>

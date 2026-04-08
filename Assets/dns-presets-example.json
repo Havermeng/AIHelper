@@ -1,0 +1,22 @@
+[
+  {
+    "Name": "COMSS DNS",
+    "PrimaryDns": "83.220.169.155",
+    "SecondaryDns": "212.109.195.93",
+    "Description": "Публичный DNS-сервер (COMSS)",
+    "EnableDoh": true,
+    "DohTemplate": "https://dns.comss.one/dns-query",
+    "IsCustom": true,
+    "IsAutomaticPreset": false
+  },
+  {
+    "Name": "Xbox DNS (Smart DNS)",
+    "PrimaryDns": "111.88.96.50",
+    "SecondaryDns": "111.88.96.51",
+    "Description": "Публичный DNS-сервер",
+    "EnableDoh": true,
+    "DohTemplate": "https://xbox-dns.ru/dns-query",
+    "IsCustom": true,
+    "IsAutomaticPreset": false
+  }
+]
