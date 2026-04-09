@@ -1215,9 +1215,43 @@
                                                         CornerRadius="20"
                                                         Background="#ECDED0">
                                                     <StackPanel>
-                                                        <Button
-                                                                Click="RefreshSetupStatusButton_Click"
-                                                                Content="{Binding Strings[SetupRefreshButton]}" />
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="10" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto" />
+                                                                <RowDefinition Height="10" />
+                                                                <RowDefinition Height="Auto" />
+                                                            </Grid.RowDefinitions>
+
+                                                            <Button Grid.Row="0"
+                                                                    Grid.Column="0"
+                                                                    Click="RefreshSetupStatusButton_Click"
+                                                                    Content="{Binding Strings[SetupRefreshButton]}" />
+                                                            <Button Grid.Row="0"
+                                                                    Grid.Column="2"
+                                                                    Click="InstallBaseComponentsButton_Click"
+                                                                    IsEnabled="{Binding CanInstallBaseComponents}"
+                                                                    Content="{Binding Strings[SetupInstallBaseComponentsButton]}" />
+                                                            <Button Grid.Row="2"
+                                                                    Grid.Column="0"
+                                                                    Click="RepairWingetButton_Click"
+                                                                    IsEnabled="{Binding CanRepairWinget}"
+                                                                    Content="{Binding Strings[SetupRepairWingetButton]}" />
+                                                            <Button Grid.Row="2"
+                                                                    Grid.Column="2"
+                                                                    Click="InstallNodeButton_Click"
+                                                                    IsEnabled="{Binding CanInstallBaseComponents}"
+                                                                    Content="{Binding Strings[SetupInstallNodeButton]}" />
+                                                        </Grid>
+
+                                                        <Button Margin="0,10,0,0"
+                                                                Click="InstallGitButton_Click"
+                                                                IsEnabled="{Binding CanInstallBaseComponents}"
+                                                                Content="{Binding Strings[SetupInstallGitButton]}" />
 
                                                         <ProgressBar Margin="0,16,0,0"
                                                                      Height="8"
@@ -1241,6 +1275,10 @@
                                                                            Foreground="#475467"
                                                                            TextWrapping="Wrap"
                                                                            Text="{Binding Strings[SetupComponentsNote]}" />
+                                                                <TextBlock Margin="0,8,0,0"
+                                                                           Foreground="#475467"
+                                                                           TextWrapping="Wrap"
+                                                                           Text="{Binding Strings[SetupComponentsActionHint]}" />
                                                             </StackPanel>
                                                         </Border>
                                                     </StackPanel>

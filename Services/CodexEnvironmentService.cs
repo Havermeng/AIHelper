@@ -246,6 +246,52 @@ public sealed class CodexEnvironmentService
             });
     }
 
+    public void LaunchPrerequisitesInstallTerminal()
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), "aihelper-install-prerequisites.ps1");
+        File.WriteAllText(scriptPath, BuildPrerequisitesInstallScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+    }
+
+    public void LaunchNodeInstallTerminal()
+    {
+        LaunchWingetInstallTerminal(
+            "nodejs-lts",
+            "OpenJS.NodeJS.LTS",
+            "Node.js LTS");
+    }
+
+    public void LaunchGitInstallTerminal()
+    {
+        LaunchWingetInstallTerminal(
+            "git",
+            "Git.Git",
+            "Git");
+    }
+
+    public void LaunchWingetRepairTerminal()
+    {
+        var scriptPath = Path.Combine(Path.GetTempPath(), "aihelper-repair-winget.ps1");
+        File.WriteAllText(scriptPath, BuildWingetRepairScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true,
+                Verb = "runas"
+            });
+    }
+
     public bool IsOllamaInstalled()
     {
         return !string.IsNullOrWhiteSpace(ResolveOllamaExecutablePath());
@@ -553,6 +599,35 @@ Write-Host 'Next step: run `codex login` if the CLI is not authenticated yet.' -
 """;
     }
 
+    private static string BuildPrerequisitesInstallScript()
+    {
+        return """
+$ErrorActionPreference = 'Stop'
+
+function Write-Step([string]$Text) {
+    Write-Host ''
+    Write-Host "== $Text ==" -ForegroundColor Cyan
+}
+
+function Ensure-WingetPackage([string]$Id, [string]$Label) {
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        throw 'winget.exe is not available on this system.'
+    }
+
+    Write-Step "Installing or updating $Label"
+    winget install --id $Id -e --accept-package-agreements --accept-source-agreements
+}
+
+Ensure-WingetPackage 'OpenJS.NodeJS.LTS' 'Node.js LTS'
+Ensure-WingetPackage 'Git.Git' 'Git'
+
+Write-Host ''
+Write-Host 'Node.js and Git install/update command finished.' -ForegroundColor Green
+Write-Host 'npm is installed together with Node.js LTS.' -ForegroundColor Green
+Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundColor Green
+""";
+    }
+
     private static string BuildWingetInstallScript(string packageId, string label)
     {
         return
@@ -587,6 +662,30 @@ Write-Host 'Next step: run `codex login` if the CLI is not authenticated yet.' -
             "Write-Host ''" + Environment.NewLine +
             $"Write-Host '{label} uninstall command finished.' -ForegroundColor Green" + Environment.NewLine +
             "Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundColor Green" + Environment.NewLine;
+    }
+
+    private static string BuildWingetRepairScript()
+    {
+        return """
+$ErrorActionPreference = 'Stop'
+
+Write-Host ''
+Write-Host '== Restoring WinGet / App Installer ==' -ForegroundColor Cyan
+
+Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+
+if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    Write-Host ''
+    Write-Host 'WinGet is available now.' -ForegroundColor Green
+} else {
+    Write-Host ''
+    Write-Host 'WinGet is still unavailable. Opening the official Microsoft Learn page.' -ForegroundColor Yellow
+    Start-Process 'https://learn.microsoft.com/en-us/windows/package-manager/winget/'
+}
+
+Write-Host ''
+Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundColor Green
+""";
     }
 
     private static string BuildOpenClawInstallScript()

@@ -372,6 +372,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanInstallLocalAiTools => !IsSetupBusy;
 
+    public bool CanInstallBaseComponents =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.WingetAvailable == true;
+
+    public bool CanRepairWinget => !IsSetupBusy;
+
     public bool CanInstallLocalAiModels =>
         !IsSetupBusy &&
         _lastEnvironmentSnapshot?.OllamaAvailable == true;
@@ -510,6 +516,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _isSetupBusy, value))
             {
+                OnPropertyChanged(nameof(CanInstallBaseComponents));
+                OnPropertyChanged(nameof(CanRepairWinget));
                 OnPropertyChanged(nameof(CanInstallLocalAiTools));
                 OnPropertyChanged(nameof(CanInstallLocalAiModels));
                 OnPropertyChanged(nameof(CanManageCreativeAiTools));
@@ -1220,6 +1228,58 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         await RefreshSetupStatusAsync();
         await RefreshDnsAdaptersAsync(preserveStatus: false);
+    }
+
+    private void InstallBaseComponentsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchPrerequisitesInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusBaseComponentsInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallNodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchNodeInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusNodeInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallGitButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchGitInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusGitInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void RepairWingetButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchWingetRepairTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusWingetRepairStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
     }
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
@@ -2883,6 +2943,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         finally
         {
             IsSetupBusy = false;
+            OnPropertyChanged(nameof(CanInstallBaseComponents));
+            OnPropertyChanged(nameof(CanRepairWinget));
             OnPropertyChanged(nameof(CanLaunchNewSession));
             OnPropertyChanged(nameof(CanLaunchCodexLogin));
             OnPropertyChanged(nameof(CanInstallLocalAiTools));
