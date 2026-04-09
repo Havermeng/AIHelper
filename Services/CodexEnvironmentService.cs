@@ -349,31 +349,29 @@ public sealed class CodexEnvironmentService
 
     public void LaunchOpenClawInstallTerminal()
     {
-        var scriptPath = Path.Combine(Path.GetTempPath(), "aihelper-install-openclaw.ps1");
+        var scriptPath = CreateTempScriptPath("aihelper-install-openclaw");
         File.WriteAllText(scriptPath, BuildOpenClawInstallScript(), Encoding.UTF8);
 
         Process.Start(
             new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
-                UseShellExecute = true,
-                Verb = "runas"
+                Arguments = $"-NoLogo -NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true
             });
     }
 
     public void LaunchOpenClawUninstallTerminal()
     {
-        var scriptPath = Path.Combine(Path.GetTempPath(), "aihelper-uninstall-openclaw.ps1");
+        var scriptPath = CreateTempScriptPath("aihelper-uninstall-openclaw");
         File.WriteAllText(scriptPath, BuildOpenClawUninstallScript(), Encoding.UTF8);
 
         Process.Start(
             new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
-                UseShellExecute = true,
-                Verb = "runas"
+                Arguments = $"-NoLogo -NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true
             });
     }
 
@@ -547,6 +545,11 @@ public sealed class CodexEnvironmentService
         return string.IsNullOrWhiteSpace(normalized) ? "package" : normalized;
     }
 
+    private static string CreateTempScriptPath(string scriptPrefix)
+    {
+        return Path.Combine(Path.GetTempPath(), $"{scriptPrefix}-{Guid.NewGuid():N}.ps1");
+    }
+
     private static string BuildInstallScript()
     {
         return """
@@ -693,14 +696,158 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return """
 $ErrorActionPreference = 'Stop'
 
-Write-Host ''
-Write-Host '== Installing or updating OpenClaw ==' -ForegroundColor Cyan
+function Write-Step([string]$Text) {
+    Write-Host ''
+    Write-Host "== $Text ==" -ForegroundColor Cyan
+}
 
-& ([scriptblock]::Create((iwr -useb https://openclaw.ai/install.ps1))) -NoOnboard
+function Resolve-NodeCommand {
+    $command = Get-Command node.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $command = Get-Command node -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $fallback = Join-Path ${env:ProgramFiles} 'nodejs\node.exe'
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    return $null
+}
+
+function Resolve-NpmCommand {
+    $command = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $command = Get-Command npm.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $fallback = Join-Path ${env:ProgramFiles} 'nodejs\npm.cmd'
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    return $null
+}
+
+function Resolve-OpenClawCommand {
+    foreach ($candidate in @('openclaw.cmd', 'openclaw')) {
+        $command = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($command) {
+            return $command.Source
+        }
+    }
+
+    foreach ($fallback in @(
+        (Join-Path $env:APPDATA 'npm\openclaw.cmd'),
+        (Join-Path $env:USERPROFILE '.local\bin\openclaw.cmd')
+    )) {
+        if (Test-Path $fallback) {
+            return $fallback
+        }
+    }
+
+    return $null
+}
+
+function Add-UserPathEntryIfMissing([string]$PathEntry) {
+    if ([string]::IsNullOrWhiteSpace($PathEntry) -or -not (Test-Path $PathEntry)) {
+        return
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $entries = @($userPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    if ($entries | Where-Object { $_ -ieq $PathEntry }) {
+        return
+    }
+
+    $newUserPath = if ([string]::IsNullOrWhiteSpace($userPath)) {
+        $PathEntry
+    } else {
+        "$userPath;$PathEntry"
+    }
+
+    [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $newUserPath
+    Write-Host "[OK] Added $PathEntry to user PATH" -ForegroundColor Green
+}
+
+Write-Step 'Checking Node.js and npm'
+$nodeCmd = Resolve-NodeCommand
+$npmCmd = Resolve-NpmCommand
+
+if (-not $nodeCmd -or -not $npmCmd) {
+    throw 'Node.js and npm are required before installing OpenClaw. Install the base components in AIHelper first.'
+}
+
+$nodeVersion = (& $nodeCmd --version 2>$null).Trim()
+if ([string]::IsNullOrWhiteSpace($nodeVersion)) {
+    throw 'Node.js was found, but its version could not be read.'
+}
+
+$majorString = ($nodeVersion -replace '^v', '').Split('.')[0]
+$majorVersion = 0
+if (-not [int]::TryParse($majorString, [ref]$majorVersion) -or $majorVersion -lt 22) {
+    throw "OpenClaw requires Node.js 22+. Current version: $nodeVersion"
+}
+
+Write-Host "[OK] Node.js $nodeVersion found" -ForegroundColor Green
+Write-Host "[OK] npm command: $npmCmd" -ForegroundColor Green
+
+Write-Step 'Installing OpenClaw from npm'
+Write-Host 'npm install can stay quiet for a while during package download and unpacking.' -ForegroundColor Yellow
+Write-Host 'Wait for the next step header or an explicit error before closing this terminal.' -ForegroundColor Yellow
+
+$prevScriptShell = $env:NPM_CONFIG_SCRIPT_SHELL
+$prevLogLevel = $env:NPM_CONFIG_LOGLEVEL
+
+try {
+    $env:NPM_CONFIG_SCRIPT_SHELL = 'cmd.exe'
+    $env:NPM_CONFIG_LOGLEVEL = 'info'
+    & $npmCmd install -g openclaw@latest --loglevel info
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm install finished with exit code $LASTEXITCODE."
+    }
+} finally {
+    $env:NPM_CONFIG_SCRIPT_SHELL = $prevScriptShell
+    $env:NPM_CONFIG_LOGLEVEL = $prevLogLevel
+}
+
+$npmPrefix = (& $npmCmd config get prefix 2>$null).Trim()
+if (-not [string]::IsNullOrWhiteSpace($npmPrefix)) {
+    Add-UserPathEntryIfMissing $npmPrefix
+}
+
+$openClawCmd = Resolve-OpenClawCommand
+if (-not $openClawCmd) {
+    throw 'OpenClaw was installed, but the openclaw command is still not visible. Restart AIHelper or open a new terminal and try again.'
+}
+
+Write-Host "[OK] OpenClaw command: $openClawCmd" -ForegroundColor Green
+
+Write-Step 'Starting OpenClaw onboard'
+Write-Host 'Interactive OpenClaw setup starts now.' -ForegroundColor Cyan
+Write-Host 'If OpenClaw asks additional questions, complete them in this same terminal.' -ForegroundColor Yellow
+& $openClawCmd onboard --install-daemon
+
+if ($LASTEXITCODE -ne 0) {
+    throw "OpenClaw onboard finished with exit code $LASTEXITCODE."
+}
 
 Write-Host ''
 Write-Host 'OpenClaw install/update command finished.' -ForegroundColor Green
-Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundColor Green
+Write-Host 'Return to AIHelper. The status block should refresh automatically.' -ForegroundColor Green
 """;
     }
 

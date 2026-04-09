@@ -23,6 +23,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly SessionService _sessionService = new();
     private readonly SessionViewerSettingsService _settingsService = new();
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _setupRefreshTimer;
     private List<SessionRecord> _allSessions = [];
     private HashSet<string> _favoriteSessionIds = [];
     private Dictionary<string, string> _sessionNotes = new(StringComparer.OrdinalIgnoreCase);
@@ -113,9 +114,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             Interval = TimeSpan.FromSeconds(15)
         };
+        _setupRefreshTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(10)
+        };
 
         SourceInitialized += MainWindow_SourceInitialized;
         _refreshTimer.Tick += RefreshTimer_Tick;
+        _setupRefreshTimer.Tick += SetupRefreshTimer_Tick;
+        Activated += MainWindow_Activated;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
     }
@@ -239,10 +246,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(NewSessionSectionVisibility));
                 OnPropertyChanged(nameof(SetupSectionVisibility));
                 OnPropertyChanged(nameof(SettingsSectionVisibility));
+                UpdateSetupRefreshTimer();
 
-                if (value == AppSection.Setup && IsLoaded && _lastEnvironmentSnapshot is null)
+                if (value == AppSection.Setup && IsLoaded)
                 {
-                    _ = RefreshSetupStatusAsync();
+                    _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
                 }
 
                 if (value == AppSection.Settings && IsLoaded && _lastAppUpdateSnapshot is null)
@@ -992,9 +1000,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         UpdateRefreshTimer();
+        UpdateSetupRefreshTimer();
         await RefreshSessionsAsync(isAutomaticRefresh: false);
-        await RefreshSetupStatusAsync();
-        await RefreshDnsAdaptersAsync();
+        await RefreshSetupSectionAsync(preserveDnsStatus: true);
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
@@ -1002,10 +1010,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         FitToWorkArea();
     }
 
+    private void MainWindow_Activated(object? sender, EventArgs e)
+    {
+        if (IsLoaded && SelectedAppSection == AppSection.Setup)
+        {
+            _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
+        }
+    }
+
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         PersistSelectedSessionNote(showStatus: false, refreshFilter: false);
         _refreshTimer.Stop();
+        _setupRefreshTimer.Stop();
     }
 
     private void OpenSelectedFileButton_Click(object sender, RoutedEventArgs e)
@@ -1104,6 +1121,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void RefreshTimer_Tick(object? sender, EventArgs e)
     {
         await RefreshSessionsAsync(isAutomaticRefresh: true);
+    }
+
+    private async void SetupRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        if (SelectedAppSection != AppSection.Setup)
+        {
+            return;
+        }
+
+        await RefreshSetupSectionAsync(preserveDnsStatus: true);
     }
 
     private void ToggleFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -1226,8 +1253,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void RefreshSetupStatusButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshSetupStatusAsync();
-        await RefreshDnsAdaptersAsync(preserveStatus: false);
+        await RefreshSetupSectionAsync(preserveDnsStatus: false);
     }
 
     private void InstallBaseComponentsButton_Click(object sender, RoutedEventArgs e)
@@ -2871,6 +2897,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private async Task RefreshSetupSectionAsync(bool preserveDnsStatus)
+    {
+        await RefreshSetupStatusAsync();
+        await RefreshDnsAdaptersAsync(preserveStatus: preserveDnsStatus);
+    }
+
     private async Task RefreshSettingsSectionAsync()
     {
         await RefreshUpdateStatusAsync();
@@ -3187,6 +3219,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         else
         {
             _refreshTimer.Stop();
+        }
+    }
+
+    private void UpdateSetupRefreshTimer()
+    {
+        if (SelectedAppSection == AppSection.Setup)
+        {
+            _setupRefreshTimer.Start();
+        }
+        else
+        {
+            _setupRefreshTimer.Stop();
         }
     }
 
