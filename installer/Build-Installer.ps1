@@ -7,17 +7,41 @@ $installerRoot = Split-Path -Parent $PSCommandPath
 $projectRoot = Split-Path -Parent $installerRoot
 $projectFile = Join-Path $projectRoot "LaptopSessionViewer.csproj"
 $assetsExampleJson = Join-Path $projectRoot "Assets\dns-presets-example.json"
+$appIconPath = Join-Path $projectRoot "Assets\AIHelper.ico"
 $supportRoot = Join-Path $installerRoot "Support"
 $artifactsRoot = Join-Path $installerRoot "artifacts"
 $publishRoot = Join-Path $artifactsRoot "publish-single"
 $packageRoot = Join-Path $artifactsRoot "package"
 $distRoot = Join-Path $projectRoot "dist"
 $sedPath = Join-Path $artifactsRoot "AIHelper-Setup.sed"
+$issPath = Join-Path $artifactsRoot "AIHelper-Setup.iss"
 $outputSetupPath = Join-Path $distRoot "AIHelper-Setup.exe"
+
+function Get-InnoSetupCompilerPath {
+    $command = Get-Command "iscc.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $candidatePaths = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+    )
+
+    foreach ($candidatePath in $candidatePaths) {
+        if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and (Test-Path $candidatePath)) {
+            return $candidatePath
+        }
+    }
+
+    return $null
+}
 
 Remove-Item $publishRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $packageRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $sedPath -Force -ErrorAction SilentlyContinue
+Remove-Item $issPath -Force -ErrorAction SilentlyContinue
 
 New-Item -ItemType Directory -Path $publishRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
@@ -37,6 +61,60 @@ $appExePath = Join-Path $publishRoot "AIHelper.exe"
 
 if (-not (Test-Path $appExePath)) {
     throw "Self-contained publish did not produce AIHelper.exe."
+}
+
+$productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appExePath).ProductVersion
+if ([string]::IsNullOrWhiteSpace($productVersion)) {
+    $productVersion = "1.0.0"
+}
+
+$innoSetupCompilerPath = Get-InnoSetupCompilerPath
+
+if ($innoSetupCompilerPath) {
+    $issContent = @"
+[Setup]
+AppId={{72D85F1C-6488-4A86-B55E-5A8AA3AB2B80}
+AppName=AIHelper
+AppVersion=$productVersion
+AppPublisher=AIHelper
+DefaultDirName={autopf}\AIHelper
+DefaultGroupName=AIHelper
+DisableProgramGroupPage=yes
+PrivilegesRequired=admin
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+OutputDir=$distRoot
+OutputBaseFilename=AIHelper-Setup
+SetupIconFile=$appIconPath
+UninstallDisplayIcon={app}\AIHelper.exe
+Compression=lzma
+SolidCompression=yes
+WizardStyle=modern
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Files]
+Source: "$appExePath"; DestDir: "{app}"; Flags: ignoreversion
+Source: "$assetsExampleJson"; DestDir: "{app}\Assets"; Flags: ignoreversion
+
+[Icons]
+Name: "{autoprograms}\AIHelper"; Filename: "{app}\AIHelper.exe"
+Name: "{autodesktop}\AIHelper"; Filename: "{app}\AIHelper.exe"
+
+[Run]
+Filename: "{app}\AIHelper.exe"; Description: "Launch AIHelper"; Flags: nowait postinstall skipifsilent
+"@
+
+    [IO.File]::WriteAllText($issPath, $issContent, [Text.Encoding]::ASCII)
+    & $innoSetupCompilerPath $issPath
+
+    if (-not (Test-Path $outputSetupPath)) {
+        throw "Inno Setup did not create the setup executable."
+    }
+
+    Write-Host "Installer created with Inno Setup: $outputSetupPath"
+    return
 }
 
 Copy-Item $appExePath -Destination (Join-Path $packageRoot "AIHelper.exe") -Force

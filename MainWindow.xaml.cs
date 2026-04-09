@@ -14,6 +14,7 @@ namespace LaptopSessionViewer;
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
     private readonly CodexEnvironmentService _environmentService = new();
+    private readonly AppUpdateService _updateService = new();
     private readonly DnsManagementService _dnsManagementService = new();
     private readonly DnsPresetSettingsService _dnsPresetSettingsService = new();
     private readonly SessionFavoritesService _favoritesService = new();
@@ -28,7 +29,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isLoading;
     private bool _isRefreshing;
     private bool _isDnsBusy;
+    private bool _isApplyingDangerousAccessDefaults;
     private bool _isSetupBusy;
+    private bool _isSetupCodexSectionExpanded;
+    private bool _isSetupCoreSectionExpanded;
+    private bool _isSetupDnsSectionExpanded;
+    private bool _isSetupLocalAiSectionExpanded;
+    private bool _isUpdateBusy;
+    private AppUpdateSnapshot? _lastAppUpdateSnapshot;
     private CodexEnvironmentSnapshot? _lastEnvironmentSnapshot;
     private string _configuredCodexModel = string.Empty;
     private string _dnsDohTemplate = string.Empty;
@@ -58,10 +66,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _selectedSandboxMode = "workspace-write";
     private SessionListTab _selectedSessionListTab = SessionListTab.Sessions;
     private LanguageOption? _selectedLanguageOption;
+    private bool _settingsDangerousFullAccess;
+    private string _settingsStatusForeground = "#F8E7D6";
+    private string _settingsStatusKey = "SettingsStatusReady";
+    private object[] _settingsStatusArgs = [];
+    private string _settingsStatusText = string.Empty;
     private string _selectedSessionNote = string.Empty;
     private SessionRecord? _selectedSession;
     private string _setupStatusForeground = "#F8E7D6";
     private string _setupStatusText = string.Empty;
+    private string _updateStatusForeground = "#F8E7D6";
+    private string _updateStatusKey = "UpdateStatusReady";
+    private object[] _updateStatusArgs = [];
+    private string _updateStatusText = string.Empty;
     private string _statusForeground = "#F8E7D6";
     private string _statusKey = "StatusReady";
     private object[] _statusArgs = [];
@@ -73,15 +90,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public MainWindow()
     {
-        var initialLanguage = _settingsService.LoadLanguage();
-        Strings.SetLanguage(initialLanguage);
-        _selectedLanguageOption = LanguageOptions.First(option => option.Language == initialLanguage);
+        var initialSettings = _settingsService.LoadSettings();
+        Strings.SetLanguage(initialSettings.Language);
+        _settingsDangerousFullAccess = initialSettings.DefaultDangerousFullAccess;
+        _selectedLanguageOption = LanguageOptions.First(option => option.Language == initialSettings.Language);
 
         InitializeComponent();
         DataContext = this;
 
         RefreshLaunchOptionCollections();
+        RefreshLocalAiModelOptions();
+        RefreshCreativeAiToolOptions();
+        RefreshAiAgentToolOptions();
         LoadNewSessionConfigurationInfo();
+        ApplyDangerousAccessDefaultsToNewSession();
         LoadDnsPresets();
         RefreshLocalizedChromeText();
         RefreshSectionChromeText();
@@ -105,7 +127,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<DnsPreset> DnsPresets { get; } = [];
 
-    public ObservableCollection<SetupCheckItem> SetupChecks { get; } = [];
+    public ObservableCollection<SetupCheckItem> SetupCoreChecks { get; } = [];
+
+    public ObservableCollection<SetupCheckItem> SetupCodexChecks { get; } = [];
+
+    public ObservableCollection<SetupCheckItem> SetupLocalAiChecks { get; } = [];
+
+    public ObservableCollection<LocalAiModelOption> LocalAiModelOptions { get; } = [];
+
+    public ObservableCollection<CreativeAiToolOption> CreativeAiToolOptions { get; } = [];
+
+    public ObservableCollection<CreativeAiToolOption> AiAgentToolOptions { get; } = [];
 
     public ObservableCollection<LaunchOption> SandboxModeOptions { get; } = [];
 
@@ -200,13 +232,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(NewSessionSectionButtonForeground));
                 OnPropertyChanged(nameof(SetupSectionButtonBackground));
                 OnPropertyChanged(nameof(SetupSectionButtonForeground));
+                OnPropertyChanged(nameof(SettingsSectionButtonBackground));
+                OnPropertyChanged(nameof(SettingsSectionButtonForeground));
                 OnPropertyChanged(nameof(SessionsSectionVisibility));
                 OnPropertyChanged(nameof(NewSessionSectionVisibility));
                 OnPropertyChanged(nameof(SetupSectionVisibility));
+                OnPropertyChanged(nameof(SettingsSectionVisibility));
 
-                if (value == AppSection.Setup && _lastEnvironmentSnapshot is null && IsLoaded)
+                if (value == AppSection.Setup && IsLoaded && _lastEnvironmentSnapshot is null)
                 {
                     _ = RefreshSetupStatusAsync();
+                }
+
+                if (value == AppSection.Settings && IsLoaded && _lastAppUpdateSnapshot is null)
+                {
+                    _ = RefreshSettingsSectionAsync();
                 }
             }
         }
@@ -227,6 +267,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public string SetupSectionButtonForeground => "#FFFDF9";
 
+    public string SettingsSectionButtonBackground =>
+        SelectedAppSection == AppSection.Settings ? "#D97732" : "#1D3545";
+
+    public string SettingsSectionButtonForeground => "#FFFDF9";
+
     public Visibility SessionsSectionVisibility =>
         SelectedAppSection == AppSection.Sessions ? Visibility.Visible : Visibility.Collapsed;
 
@@ -235,6 +280,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public Visibility SetupSectionVisibility =>
         SelectedAppSection == AppSection.Setup ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility SettingsSectionVisibility =>
+        SelectedAppSection == AppSection.Settings ? Visibility.Visible : Visibility.Collapsed;
 
     public string SessionsTabText => $"{Strings["SessionsTab"]} ({RegularSessions})";
 
@@ -320,6 +368,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Directory.Exists(GetNormalizedNewSessionWorkingDirectory());
 
     public bool CanLaunchCodexLogin => File.Exists(_environmentService.CodexCommandPath);
+
+    public bool CanInstallLocalAiTools => !IsSetupBusy;
+
+    public bool CanInstallLocalAiModels =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OllamaAvailable == true;
+
+    public bool CanManageCreativeAiTools => !IsSetupBusy;
+
+    public bool CanManageAiAgents => !IsSetupBusy;
+
+    public bool CanUninstallOllama =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OllamaAvailable == true;
+
+    public bool CanUninstallLmStudio =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.LmStudioAvailable == true;
 
     public bool IsDnsBusy
     {
@@ -439,7 +505,160 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool IsSetupBusy
     {
         get => _isSetupBusy;
-        private set => SetField(ref _isSetupBusy, value);
+        private set
+        {
+            if (SetField(ref _isSetupBusy, value))
+            {
+                OnPropertyChanged(nameof(CanInstallLocalAiTools));
+                OnPropertyChanged(nameof(CanInstallLocalAiModels));
+                OnPropertyChanged(nameof(CanManageCreativeAiTools));
+                OnPropertyChanged(nameof(CanManageAiAgents));
+                OnPropertyChanged(nameof(CanUninstallOllama));
+                OnPropertyChanged(nameof(CanUninstallLmStudio));
+            }
+        }
+    }
+
+    public bool IsSetupCoreSectionExpanded
+    {
+        get => _isSetupCoreSectionExpanded;
+        set
+        {
+            if (SetField(ref _isSetupCoreSectionExpanded, value))
+            {
+                OnPropertyChanged(nameof(SetupCoreSectionContentVisibility));
+                OnPropertyChanged(nameof(SetupCoreSectionToggleGlyph));
+            }
+        }
+    }
+
+    public bool IsSetupCodexSectionExpanded
+    {
+        get => _isSetupCodexSectionExpanded;
+        set
+        {
+            if (SetField(ref _isSetupCodexSectionExpanded, value))
+            {
+                OnPropertyChanged(nameof(SetupCodexSectionContentVisibility));
+                OnPropertyChanged(nameof(SetupCodexSectionToggleGlyph));
+            }
+        }
+    }
+
+    public bool IsSetupLocalAiSectionExpanded
+    {
+        get => _isSetupLocalAiSectionExpanded;
+        set
+        {
+            if (SetField(ref _isSetupLocalAiSectionExpanded, value))
+            {
+                OnPropertyChanged(nameof(SetupLocalAiSectionContentVisibility));
+                OnPropertyChanged(nameof(SetupLocalAiSectionToggleGlyph));
+            }
+        }
+    }
+
+    public bool IsSetupDnsSectionExpanded
+    {
+        get => _isSetupDnsSectionExpanded;
+        set
+        {
+            if (SetField(ref _isSetupDnsSectionExpanded, value))
+            {
+                OnPropertyChanged(nameof(SetupDnsSectionContentVisibility));
+                OnPropertyChanged(nameof(SetupDnsSectionToggleGlyph));
+            }
+        }
+    }
+
+    public Visibility SetupCoreSectionContentVisibility =>
+        IsSetupCoreSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility SetupCodexSectionContentVisibility =>
+        IsSetupCodexSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility SetupLocalAiSectionContentVisibility =>
+        IsSetupLocalAiSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility SetupDnsSectionContentVisibility =>
+        IsSetupDnsSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+
+    public string SetupCoreSectionToggleGlyph => IsSetupCoreSectionExpanded ? "−" : "+";
+
+    public string SetupCodexSectionToggleGlyph => IsSetupCodexSectionExpanded ? "−" : "+";
+
+    public string SetupLocalAiSectionToggleGlyph => IsSetupLocalAiSectionExpanded ? "−" : "+";
+
+    public string SetupDnsSectionToggleGlyph => IsSetupDnsSectionExpanded ? "−" : "+";
+
+    public bool IsUpdateBusy
+    {
+        get => _isUpdateBusy;
+        private set
+        {
+            if (SetField(ref _isUpdateBusy, value))
+            {
+                RefreshUpdateCommandStates();
+            }
+        }
+    }
+
+    public string CurrentAppVersionText =>
+        _lastAppUpdateSnapshot?.CurrentVersionDisplay ?? _updateService.CurrentVersionDisplay;
+
+    public string LatestAppVersionText =>
+        _lastAppUpdateSnapshot?.LatestVersionDisplay ?? Strings["UpdateVersionUnknown"];
+
+    public string UpdateReleaseTitleText =>
+        string.IsNullOrWhiteSpace(_lastAppUpdateSnapshot?.ReleaseTitle)
+            ? Strings["UpdateReleaseUnknown"]
+            : _lastAppUpdateSnapshot!.ReleaseTitle;
+
+    public string UpdatePublishedText =>
+        _lastAppUpdateSnapshot?.PublishedAtUtc is { } publishedAtUtc
+            ? publishedAtUtc.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")
+            : Strings["UpdatePublishedUnknown"];
+
+    public bool CanCheckForUpdates => !IsUpdateBusy;
+
+    public bool CanDownloadUpdate =>
+        _lastAppUpdateSnapshot?.IsUpdateAvailable == true &&
+        _lastAppUpdateSnapshot.HasInstallerAsset &&
+        !IsUpdateBusy;
+
+    public bool CanOpenReleasePage =>
+        !IsUpdateBusy &&
+        (!string.IsNullOrWhiteSpace(_lastAppUpdateSnapshot?.ReleasePageUrl) ||
+         !string.IsNullOrWhiteSpace(_updateService.ReleasePageUrl));
+
+    public string UpdateStatusText
+    {
+        get => _updateStatusText;
+        private set => SetField(ref _updateStatusText, value);
+    }
+
+    public string UpdateStatusForeground
+    {
+        get => _updateStatusForeground;
+        private set => SetField(ref _updateStatusForeground, value);
+    }
+
+    public bool SettingsDangerousFullAccess
+    {
+        get => _settingsDangerousFullAccess;
+        set => SetField(ref _settingsDangerousFullAccess, value);
+    }
+
+    public string SettingsStatusText
+    {
+        get => _settingsStatusText;
+        private set => SetField(ref _settingsStatusText, value);
+    }
+
+    public string SettingsStatusForeground
+    {
+        get => _settingsStatusForeground;
+        private set => SetField(ref _settingsStatusForeground, value);
     }
 
     public string NewSessionPrompt
@@ -933,6 +1152,31 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedAppSection = AppSection.Setup;
     }
 
+    private void ToggleSetupCoreSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        IsSetupCoreSectionExpanded = !IsSetupCoreSectionExpanded;
+    }
+
+    private void ToggleSetupCodexSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        IsSetupCodexSectionExpanded = !IsSetupCodexSectionExpanded;
+    }
+
+    private void ToggleSetupLocalAiSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        IsSetupLocalAiSectionExpanded = !IsSetupLocalAiSectionExpanded;
+    }
+
+    private void ToggleSetupDnsSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        IsSetupDnsSectionExpanded = !IsSetupDnsSectionExpanded;
+    }
+
+    private void SettingsSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedAppSection = AppSection.Settings;
+    }
+
     private void UseSelectedSessionDirectoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (!CanUseSelectedSessionDirectory || SelectedSession is null)
@@ -975,6 +1219,145 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         await RefreshSetupStatusAsync();
         await RefreshDnsAdaptersAsync(preserveStatus: false);
+    }
+
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RefreshUpdateStatusAsync();
+    }
+
+    private async void DownloadUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var snapshot = _lastAppUpdateSnapshot;
+
+        if (snapshot is null)
+        {
+            await RefreshUpdateStatusAsync();
+            snapshot = _lastAppUpdateSnapshot;
+        }
+
+        if (snapshot is null || !snapshot.IsUpdateAvailable || !snapshot.HasInstallerAsset)
+        {
+            return;
+        }
+
+        var latestVersion = snapshot.LatestVersionDisplay.TrimStart('v', 'V');
+        var initialDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Downloads");
+
+        if (!Directory.Exists(initialDirectory))
+        {
+            initialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        }
+
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Executable (*.exe)|*.exe|All files (*.*)|*.*",
+            DefaultExt = ".exe",
+            AddExtension = true,
+            FileName = string.IsNullOrWhiteSpace(latestVersion)
+                ? "AIHelper-Setup.exe"
+                : $"AIHelper-Setup-{latestVersion}.exe",
+            InitialDirectory = initialDirectory,
+            OverwritePrompt = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            IsUpdateBusy = true;
+            SetUpdateStatus("#F8E7D6", "UpdateStatusDownloading");
+            await _updateService.DownloadInstallerAsync(snapshot.InstallerDownloadUrl, dialog.FileName);
+            SetUpdateStatus("#F8E7D6", "UpdateStatusDownloaded", dialog.FileName);
+
+            var launchResult = MessageBox.Show(
+                Strings.Format("UpdateLaunchInstallerMessage", dialog.FileName),
+                Strings["UpdateLaunchInstallerTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (launchResult != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            Process.Start(
+                new ProcessStartInfo
+                {
+                    FileName = dialog.FileName,
+                    UseShellExecute = true,
+                    WorkingDirectory = Path.GetDirectoryName(dialog.FileName) ?? string.Empty
+                });
+            SetUpdateStatus("#F8E7D6", "UpdateStatusInstallerStarted");
+        }
+        catch (Exception exception)
+        {
+            SetUpdateStatus("#FFD6D6", "UpdateStatusDownloadFailed", exception.Message);
+        }
+        finally
+        {
+            IsUpdateBusy = false;
+            RefreshUpdateCommandStates();
+        }
+    }
+
+    private void OpenReleasePageButton_Click(object sender, RoutedEventArgs e)
+    {
+        var releasePageUrl = _lastAppUpdateSnapshot?.ReleasePageUrl;
+
+        if (string.IsNullOrWhiteSpace(releasePageUrl))
+        {
+            releasePageUrl = _updateService.ReleasePageUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(releasePageUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(
+                new ProcessStartInfo
+                {
+                    FileName = releasePageUrl,
+                    UseShellExecute = true
+                });
+            SetUpdateStatus("#F8E7D6", "UpdateStatusReleaseOpened");
+        }
+        catch (Exception exception)
+        {
+            SetUpdateStatus("#FFD6D6", "UpdateStatusOpenFailed", exception.Message);
+        }
+    }
+
+    private void ApplyDangerousAccessSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SettingsDangerousFullAccess)
+        {
+            var confirmation = MessageBox.Show(
+                Strings["SettingsDangerousAccessWarningMessage"],
+                Strings["SettingsDangerousAccessWarningTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                SettingsDangerousFullAccess = false;
+                return;
+            }
+        }
+
+        _settingsService.SaveDefaultDangerousFullAccess(SettingsDangerousFullAccess);
+        ApplyDangerousAccessDefaultsToNewSession();
+        SetSettingsStatus(
+            "#F8E7D6",
+            SettingsDangerousFullAccess ? "SettingsStatusDangerousEnabled" : "SettingsStatusDangerousDisabled");
     }
 
     private async void RefreshDnsAdaptersButton_Click(object sender, RoutedEventArgs e)
@@ -1296,6 +1679,222 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void InstallOllamaButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOllamaInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallLmStudioButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchLmStudioInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusLmStudioInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void UninstallOllamaButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupRemoveRuntimeWarningTitle"],
+                Strings.Format("SetupRemoveRuntimeWarningMessage", "Ollama")))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOllamaUninstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaUninstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void UninstallLmStudioButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupRemoveRuntimeWarningTitle"],
+                Strings.Format("SetupRemoveRuntimeWarningMessage", "LM Studio")))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchLmStudioUninstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusLmStudioUninstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallLocalAiModelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: LocalAiModelOption option })
+        {
+            return;
+        }
+
+        if (!_environmentService.IsOllamaInstalled())
+        {
+            SetSetupStatus("#FFD6D6", Strings["SetupStatusOllamaMissing"]);
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOllamaModelInstallTerminal(option.ModelTag);
+            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusModelInstallStarted", option.Name));
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void RemoveLocalAiModelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: LocalAiModelOption option })
+        {
+            return;
+        }
+
+        if (!option.IsInstalled)
+        {
+            return;
+        }
+
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupRemoveModelWarningTitle"],
+                Strings.Format("SetupRemoveModelWarningMessage", option.Name, option.ModelTag)))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOllamaModelRemoveTerminal(option.ModelTag);
+            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusModelRemoveStarted", option.Name));
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallCreativeAiToolButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: CreativeAiToolOption option })
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchCreativeToolInstallTerminal(option.PackageId, option.Name);
+            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusCreativeToolInstallStarted", option.Name));
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void RemoveCreativeAiToolButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: CreativeAiToolOption option })
+        {
+            return;
+        }
+
+        if (!option.IsInstalled || IsSetupBusy)
+        {
+            return;
+        }
+
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupRemoveCreativeToolWarningTitle"],
+                Strings.Format("SetupRemoveCreativeToolWarningMessage", option.Name)))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchCreativeToolUninstallTerminal(option.PackageId, option.Name);
+            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusCreativeToolRemoveStarted", option.Name));
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallAiAgentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: CreativeAiToolOption option })
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOpenClawInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusAiAgentInstallStarted", option.Name));
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void RemoveAiAgentButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: CreativeAiToolOption option })
+        {
+            return;
+        }
+
+        if (!option.IsInstalled || IsSetupBusy)
+        {
+            return;
+        }
+
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupRemoveAiAgentWarningTitle"],
+                Strings.Format("SetupRemoveAiAgentWarningMessage", option.Name)))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOpenClawUninstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusAiAgentRemoveStarted", option.Name));
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
     private void LaunchCodexLoginButton_Click(object sender, RoutedEventArgs e)
     {
         if (!File.Exists(_environmentService.CodexCommandPath))
@@ -1440,8 +2039,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanEditSelectedDnsPreset));
         OnPropertyChanged(nameof(CanDeleteSelectedDnsPreset));
         OnPropertyChanged(nameof(CanEditDnsFields));
+        OnPropertyChanged(nameof(CurrentAppVersionText));
+        OnPropertyChanged(nameof(LatestAppVersionText));
+        OnPropertyChanged(nameof(UpdateReleaseTitleText));
+        OnPropertyChanged(nameof(UpdatePublishedText));
+        OnPropertyChanged(nameof(CanCheckForUpdates));
+        OnPropertyChanged(nameof(CanDownloadUpdate));
+        OnPropertyChanged(nameof(CanOpenReleasePage));
+        OnPropertyChanged(nameof(CanInstallLocalAiTools));
+        OnPropertyChanged(nameof(CanInstallLocalAiModels));
+        OnPropertyChanged(nameof(CanManageCreativeAiTools));
+        OnPropertyChanged(nameof(CanManageAiAgents));
 
         RefreshLaunchOptionCollections();
+        RefreshLocalAiModelOptions();
+        RefreshCreativeAiToolOptions(_lastEnvironmentSnapshot);
+        RefreshAiAgentToolOptions(_lastEnvironmentSnapshot);
         LoadDnsPresets(SelectedDnsPreset);
         RefreshLocalizedChromeText();
         RefreshSectionChromeText();
@@ -1449,6 +2062,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_lastEnvironmentSnapshot is not null)
         {
             ApplySetupSnapshot(_lastEnvironmentSnapshot);
+        }
+
+        if (_lastAppUpdateSnapshot is not null)
+        {
+            ApplyUpdateSnapshot(_lastAppUpdateSnapshot);
         }
 
         if (IsLoaded)
@@ -1460,6 +2078,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void RefreshLocalizedChromeText()
     {
         StatusText = FormatLocalizedText(_statusKey, _statusArgs);
+        SettingsStatusText = FormatLocalizedText(_settingsStatusKey, _settingsStatusArgs);
+        UpdateStatusText = FormatLocalizedText(_updateStatusKey, _updateStatusArgs);
         LastUpdatedText = _lastUpdatedAtLocal is null
             ? Strings["NoRefreshYet"]
             : Strings.Format("LastUpdated", _lastUpdatedAtLocal.Value.ToString("dd.MM.yyyy HH:mm:ss"));
@@ -1471,6 +2091,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         NewSessionStatusForeground = "#F8E7D6";
         SetupStatusText = Strings["SetupStatusReady"];
         SetupStatusForeground = "#F8E7D6";
+        _settingsStatusKey = "SettingsStatusReady";
+        _settingsStatusArgs = [];
+        SettingsStatusText = Strings["SettingsStatusReady"];
+        SettingsStatusForeground = "#F8E7D6";
+        _updateStatusKey = "UpdateStatusReady";
+        _updateStatusArgs = [];
+        UpdateStatusText = Strings["UpdateStatusReady"];
+        UpdateStatusForeground = "#F8E7D6";
         DnsStatusText = Strings["DnsStatusReady"];
         DnsStatusForeground = "#F8E7D6";
     }
@@ -1547,6 +2175,129 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ]);
     }
 
+    private void RefreshLocalAiModelOptions(IReadOnlyDictionary<string, string>? installedModels = null)
+    {
+        var localModels = installedModels ??
+                          _lastEnvironmentSnapshot?.InstalledOllamaModels ??
+                          new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        LocalAiModelOptions.Clear();
+
+        LocalAiModelOptions.Add(
+            new LocalAiModelOption
+            {
+                Name = "Qwen2.5 Coder 7B",
+                ModelTag = "qwen2.5-coder:7b",
+                SizeLabel = "7B",
+                Description = Strings["SetupLocalAiModelCoderDescription"],
+                IsInstalled = localModels.TryGetValue("qwen2.5-coder:7b", out var qwenSize),
+                InstalledStatusText = localModels.ContainsKey("qwen2.5-coder:7b")
+                    ? Strings["SetupLocalAiInstalled"]
+                    : Strings["SetupLocalAiNotInstalled"],
+                InstalledStatusBrush = localModels.ContainsKey("qwen2.5-coder:7b") ? "#1F7A52" : "#5E6C76",
+                InstalledSizeText = localModels.TryGetValue("qwen2.5-coder:7b", out qwenSize)
+                    ? Strings.Format("SetupLocalAiInstalledSize", qwenSize)
+                    : Strings["SetupLocalAiMissingSize"]
+            });
+        LocalAiModelOptions.Add(
+            new LocalAiModelOption
+            {
+                Name = "Phi-4 Mini",
+                ModelTag = "phi4-mini",
+                SizeLabel = "3.8B",
+                Description = Strings["SetupLocalAiModelReasoningDescription"],
+                IsInstalled = localModels.TryGetValue("phi4-mini", out var phiSize),
+                InstalledStatusText = localModels.ContainsKey("phi4-mini")
+                    ? Strings["SetupLocalAiInstalled"]
+                    : Strings["SetupLocalAiNotInstalled"],
+                InstalledStatusBrush = localModels.ContainsKey("phi4-mini") ? "#1F7A52" : "#5E6C76",
+                InstalledSizeText = localModels.TryGetValue("phi4-mini", out phiSize)
+                    ? Strings.Format("SetupLocalAiInstalledSize", phiSize)
+                    : Strings["SetupLocalAiMissingSize"]
+            });
+        LocalAiModelOptions.Add(
+            new LocalAiModelOption
+            {
+                Name = "Gemma 3 4B",
+                ModelTag = "gemma3:4b",
+                SizeLabel = "4B",
+                Description = Strings["SetupLocalAiModelGeneralDescription"],
+                IsInstalled = localModels.TryGetValue("gemma3:4b", out var gemmaSize),
+                InstalledStatusText = localModels.ContainsKey("gemma3:4b")
+                    ? Strings["SetupLocalAiInstalled"]
+                    : Strings["SetupLocalAiNotInstalled"],
+                InstalledStatusBrush = localModels.ContainsKey("gemma3:4b") ? "#1F7A52" : "#5E6C76",
+                InstalledSizeText = localModels.TryGetValue("gemma3:4b", out gemmaSize)
+                    ? Strings.Format("SetupLocalAiInstalledSize", gemmaSize)
+                    : Strings["SetupLocalAiMissingSize"]
+            });
+    }
+
+    private void RefreshCreativeAiToolOptions(CodexEnvironmentSnapshot? snapshot = null)
+    {
+        var environment = snapshot ?? _lastEnvironmentSnapshot;
+        var comfyInstalled = environment?.ComfyUiDesktopAvailable == true;
+        var pinokioInstalled = environment?.PinokioAvailable == true;
+
+        CreativeAiToolOptions.Clear();
+        CreativeAiToolOptions.Add(
+            new CreativeAiToolOption
+            {
+                Name = "ComfyUI Desktop",
+                PackageId = "Comfy.ComfyUI-Desktop",
+                CoverageLabel = Strings["SetupCreativeAiCoverageUniversal"],
+                Description = Strings["SetupCreativeAiToolComfyDescription"],
+                IsInstalled = comfyInstalled,
+                InstalledStatusText = comfyInstalled
+                    ? Strings["SetupLocalAiInstalled"]
+                    : Strings["SetupLocalAiNotInstalled"],
+                InstalledStatusBrush = comfyInstalled ? "#1F7A52" : "#5E6C76",
+                InstalledDetailText = comfyInstalled
+                    ? environment?.ComfyUiDesktopDetail ?? "Comfy.ComfyUI-Desktop"
+                    : Strings["SetupCreativeAiMissingDetail"]
+            });
+        CreativeAiToolOptions.Add(
+            new CreativeAiToolOption
+            {
+                Name = "Pinokio",
+                PackageId = "pinokiocomputer.pinokio",
+                CoverageLabel = Strings["SetupCreativeAiCoverageLauncher"],
+                Description = Strings["SetupCreativeAiToolPinokioDescription"],
+                IsInstalled = pinokioInstalled,
+                InstalledStatusText = pinokioInstalled
+                    ? Strings["SetupLocalAiInstalled"]
+                    : Strings["SetupLocalAiNotInstalled"],
+                InstalledStatusBrush = pinokioInstalled ? "#1F7A52" : "#5E6C76",
+                InstalledDetailText = pinokioInstalled
+                    ? environment?.PinokioDetail ?? "pinokiocomputer.pinokio"
+                    : Strings["SetupCreativeAiMissingDetail"]
+            });
+    }
+
+    private void RefreshAiAgentToolOptions(CodexEnvironmentSnapshot? snapshot = null)
+    {
+        var environment = snapshot ?? _lastEnvironmentSnapshot;
+        var openClawInstalled = environment?.OpenClawAvailable == true;
+
+        AiAgentToolOptions.Clear();
+        AiAgentToolOptions.Add(
+            new CreativeAiToolOption
+            {
+                Name = "OpenClaw",
+                PackageId = "openclaw",
+                CoverageLabel = Strings["SetupAiAgentCoverageLocal"],
+                Description = Strings["SetupAiAgentOpenClawDescription"],
+                IsInstalled = openClawInstalled,
+                InstalledStatusText = openClawInstalled
+                    ? Strings["SetupLocalAiInstalled"]
+                    : Strings["SetupLocalAiNotInstalled"],
+                InstalledStatusBrush = openClawInstalled ? "#1F7A52" : "#5E6C76",
+                InstalledDetailText = openClawInstalled
+                    ? environment?.OpenClawDetail ?? "openclaw"
+                    : Strings["SetupAiAgentMissingDetail"]
+            });
+    }
+
     private void LoadNewSessionConfigurationInfo()
     {
         var configInfo = _environmentService.GetCodexConfigInfo();
@@ -1569,6 +2320,44 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         OnPropertyChanged(nameof(NewSessionModelHelpText));
         OnPropertyChanged(nameof(NewSessionProfileHelpText));
+    }
+
+    private void ApplyDangerousAccessDefaultsToNewSession()
+    {
+        if (_isApplyingDangerousAccessDefaults)
+        {
+            return;
+        }
+
+        _isApplyingDangerousAccessDefaults = true;
+
+        try
+        {
+            if (SettingsDangerousFullAccess)
+            {
+                NewSessionUseFullAuto = false;
+                SelectedSandboxMode = "danger-full-access";
+                SelectedApprovalPolicy = "never";
+            }
+            else
+            {
+                if (string.Equals(SelectedSandboxMode, "danger-full-access", StringComparison.OrdinalIgnoreCase))
+                {
+                    SelectedSandboxMode = "workspace-write";
+                }
+
+                if (string.Equals(SelectedApprovalPolicy, "never", StringComparison.OrdinalIgnoreCase))
+                {
+                    SelectedApprovalPolicy = "on-request";
+                }
+            }
+        }
+        finally
+        {
+            _isApplyingDangerousAccessDefaults = false;
+        }
+
+        OnPropertyChanged(nameof(NewSessionPreviewCommandText));
     }
 
     private void LoadDnsPresets(DnsPreset? preferredPreset = null)
@@ -1802,6 +2591,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetupStatusText = text;
     }
 
+    private void SetSettingsStatus(string foreground, string key, params object[] args)
+    {
+        _settingsStatusKey = key;
+        _settingsStatusArgs = args;
+        SettingsStatusForeground = foreground;
+        SettingsStatusText = FormatLocalizedText(key, args);
+    }
+
+    private void SetUpdateStatus(string foreground, string key, params object[] args)
+    {
+        _updateStatusKey = key;
+        _updateStatusArgs = args;
+        UpdateStatusForeground = foreground;
+        UpdateStatusText = FormatLocalizedText(key, args);
+    }
+
     private void SetDnsStatus(string foreground, string text)
     {
         DnsStatusForeground = foreground;
@@ -1954,6 +2759,54 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private async Task RefreshSettingsSectionAsync()
+    {
+        await RefreshUpdateStatusAsync();
+    }
+
+    private async Task RefreshUpdateStatusAsync()
+    {
+        if (IsUpdateBusy)
+        {
+            return;
+        }
+
+        IsUpdateBusy = true;
+        SetUpdateStatus("#F8E7D6", "UpdateStatusChecking");
+
+        try
+        {
+            var snapshot = await _updateService.GetLatestReleaseAsync();
+            _lastAppUpdateSnapshot = snapshot;
+            ApplyUpdateSnapshot(snapshot);
+
+            if (snapshot.IsUpdateAvailable)
+            {
+                if (snapshot.HasInstallerAsset)
+                {
+                    SetUpdateStatus("#F8E7D6", "UpdateStatusAvailable", snapshot.LatestVersionDisplay);
+                }
+                else
+                {
+                    SetUpdateStatus("#FFD98C", "UpdateStatusNoInstaller");
+                }
+            }
+            else
+            {
+                SetUpdateStatus("#F8E7D6", "UpdateStatusUpToDate", snapshot.CurrentVersionDisplay);
+            }
+        }
+        catch (Exception exception)
+        {
+            SetUpdateStatus("#FFD6D6", "UpdateStatusCheckFailed", exception.Message);
+        }
+        finally
+        {
+            IsUpdateBusy = false;
+            RefreshUpdateCommandStates();
+        }
+    }
+
     private async Task RefreshSetupStatusAsync()
     {
         if (IsSetupBusy)
@@ -1980,10 +2833,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IsSetupBusy = false;
             OnPropertyChanged(nameof(CanLaunchNewSession));
             OnPropertyChanged(nameof(CanLaunchCodexLogin));
+            OnPropertyChanged(nameof(CanInstallLocalAiTools));
+            OnPropertyChanged(nameof(CanInstallLocalAiModels));
+            OnPropertyChanged(nameof(CanManageCreativeAiTools));
+            OnPropertyChanged(nameof(CanManageAiAgents));
         }
     }
 
     private bool ConfirmDnsWarning(string title, string message)
+    {
+        return MessageBox.Show(
+            message,
+            title,
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
+    private static bool ConfirmLocalAiRemoval(string title, string message)
     {
         return MessageBox.Show(
             message,
@@ -2007,40 +2873,96 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedDnsAdapterServersText));
     }
 
+    private void RefreshUpdateCommandStates()
+    {
+        OnPropertyChanged(nameof(CanCheckForUpdates));
+        OnPropertyChanged(nameof(CanDownloadUpdate));
+        OnPropertyChanged(nameof(CanOpenReleasePage));
+        OnPropertyChanged(nameof(CurrentAppVersionText));
+        OnPropertyChanged(nameof(LatestAppVersionText));
+        OnPropertyChanged(nameof(UpdateReleaseTitleText));
+        OnPropertyChanged(nameof(UpdatePublishedText));
+    }
+
+    private void ApplyUpdateSnapshot(AppUpdateSnapshot snapshot)
+    {
+        OnPropertyChanged(nameof(CurrentAppVersionText));
+        OnPropertyChanged(nameof(LatestAppVersionText));
+        OnPropertyChanged(nameof(UpdateReleaseTitleText));
+        OnPropertyChanged(nameof(UpdatePublishedText));
+        RefreshUpdateCommandStates();
+    }
+
     private void ApplySetupSnapshot(CodexEnvironmentSnapshot snapshot)
     {
-        SetupChecks.Clear();
-        SetupChecks.Add(
+        RefreshLocalAiModelOptions(snapshot.InstalledOllamaModels);
+        RefreshCreativeAiToolOptions(snapshot);
+        RefreshAiAgentToolOptions(snapshot);
+        SetupCoreChecks.Clear();
+        SetupCodexChecks.Clear();
+        SetupLocalAiChecks.Clear();
+
+        SetupCoreChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckWinget"],
                 snapshot.WingetAvailable ? Strings["SetupBadgeFound"] : Strings["SetupBadgeMissing"],
                 snapshot.WingetAvailable ? snapshot.WingetVersion : Strings["SetupDetailWingetMissing"],
                 snapshot.WingetAvailable));
-        SetupChecks.Add(
+        SetupCoreChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckNode"],
                 snapshot.NodeAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.NodeAvailable ? snapshot.NodeVersion : Strings["SetupDetailNodeMissing"],
                 snapshot.NodeAvailable));
-        SetupChecks.Add(
+        SetupCoreChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckNpm"],
                 snapshot.NpmAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.NpmAvailable ? snapshot.NpmVersion : Strings["SetupDetailNpmMissing"],
                 snapshot.NpmAvailable));
-        SetupChecks.Add(
+        SetupCoreChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckGit"],
                 snapshot.GitAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.GitAvailable ? snapshot.GitVersion : Strings["SetupDetailGitMissing"],
                 snapshot.GitAvailable));
-        SetupChecks.Add(
+        SetupCodexChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckCodex"],
                 snapshot.CodexAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.CodexAvailable ? snapshot.CodexVersion : Strings["SetupDetailCodexMissing"],
                 snapshot.CodexAvailable));
-        SetupChecks.Add(
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOllama"],
+                snapshot.OllamaAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.OllamaAvailable ? snapshot.OllamaDetail : Strings["SetupDetailOllamaMissing"],
+                snapshot.OllamaAvailable));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckLmStudio"],
+                snapshot.LmStudioAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.LmStudioAvailable ? snapshot.LmStudioDetail : Strings["SetupDetailLmStudioMissing"],
+                snapshot.LmStudioAvailable));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckComfyUi"],
+                snapshot.ComfyUiDesktopAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.ComfyUiDesktopAvailable ? snapshot.ComfyUiDesktopDetail : Strings["SetupDetailComfyUiMissing"],
+                snapshot.ComfyUiDesktopAvailable));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckPinokio"],
+                snapshot.PinokioAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.PinokioAvailable ? snapshot.PinokioDetail : Strings["SetupDetailPinokioMissing"],
+                snapshot.PinokioAvailable));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOpenClaw"],
+                snapshot.OpenClawAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.OpenClawAvailable ? snapshot.OpenClawDetail : Strings["SetupDetailOpenClawMissing"],
+                snapshot.OpenClawAvailable));
+        SetupCodexChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckLogin"],
                 snapshot.LoggedIn ? Strings["SetupBadgeLoggedIn"] : Strings["SetupBadgeNeedsLogin"],
@@ -2049,12 +2971,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     : snapshot.LoginStatus,
                 snapshot.LoggedIn,
                 isWarning: !snapshot.LoggedIn));
-        SetupChecks.Add(
+        SetupCodexChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckSessionsFolder"],
                 snapshot.SessionsFolderExists ? Strings["SetupBadgeExists"] : Strings["SetupBadgeMissing"],
                 snapshot.SessionsFolderPath,
                 snapshot.SessionsFolderExists));
+
+        OnPropertyChanged(nameof(CanInstallLocalAiModels));
+        OnPropertyChanged(nameof(CanManageCreativeAiTools));
+        OnPropertyChanged(nameof(CanManageAiAgents));
+        OnPropertyChanged(nameof(CanUninstallOllama));
+        OnPropertyChanged(nameof(CanUninstallLmStudio));
     }
 
     private static SetupCheckItem CreateSetupCheckItem(
@@ -2179,3 +3107,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+
+
+

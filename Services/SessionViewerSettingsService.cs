@@ -12,11 +12,11 @@ public sealed class SessionViewerSettingsService
             ".codex",
             "session_viewer_settings.json");
 
-    public AppLanguage LoadLanguage()
+    public SessionViewerSettings LoadSettings()
     {
         if (!File.Exists(_settingsPath))
         {
-            return AppLanguage.English;
+            return new SessionViewerSettings();
         }
 
         try
@@ -24,19 +24,33 @@ public sealed class SessionViewerSettingsService
             var json = File.ReadAllText(_settingsPath);
             var settings = JsonSerializer.Deserialize<SettingsDto>(json);
 
-            return settings?.Language?.ToLowerInvariant() switch
+            return new SessionViewerSettings
             {
-                "ru" => AppLanguage.Russian,
-                _ => AppLanguage.English
+                Language = settings?.Language?.ToLowerInvariant() switch
+                {
+                    "ru" => AppLanguage.Russian,
+                    _ => AppLanguage.English
+                },
+                DefaultDangerousFullAccess = settings?.DefaultDangerousFullAccess ?? false
             };
         }
         catch (Exception exception) when (exception is JsonException or IOException)
         {
-            return AppLanguage.English;
+            return new SessionViewerSettings();
         }
     }
 
-    public void SaveLanguage(AppLanguage language)
+    public AppLanguage LoadLanguage()
+    {
+        return LoadSettings().Language;
+    }
+
+    public bool LoadDefaultDangerousFullAccess()
+    {
+        return LoadSettings().DefaultDangerousFullAccess;
+    }
+
+    public void SaveSettings(SessionViewerSettings settings)
     {
         var directoryPath = Path.GetDirectoryName(_settingsPath);
 
@@ -45,13 +59,14 @@ public sealed class SessionViewerSettingsService
             Directory.CreateDirectory(directoryPath);
         }
 
-        var settings = new SettingsDto
+        var dto = new SettingsDto
         {
-            Language = language == AppLanguage.Russian ? "ru" : "en"
+            Language = settings.Language == AppLanguage.Russian ? "ru" : "en",
+            DefaultDangerousFullAccess = settings.DefaultDangerousFullAccess
         };
 
         var json = JsonSerializer.Serialize(
-            settings,
+            dto,
             new JsonSerializerOptions
             {
                 WriteIndented = true
@@ -60,8 +75,24 @@ public sealed class SessionViewerSettingsService
         File.WriteAllText(_settingsPath, json);
     }
 
+    public void SaveLanguage(AppLanguage language)
+    {
+        var settings = LoadSettings();
+        settings.Language = language;
+        SaveSettings(settings);
+    }
+
+    public void SaveDefaultDangerousFullAccess(bool enabled)
+    {
+        var settings = LoadSettings();
+        settings.DefaultDangerousFullAccess = enabled;
+        SaveSettings(settings);
+    }
+
     private sealed class SettingsDto
     {
         public string Language { get; set; } = "en";
+
+        public bool DefaultDangerousFullAccess { get; set; }
     }
 }

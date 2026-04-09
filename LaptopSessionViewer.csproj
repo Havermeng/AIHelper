@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -6,6 +6,9 @@
     <AssemblyName>AIHelper</AssemblyName>
     <Product>AIHelper</Product>
     <AssemblyTitle>AIHelper</AssemblyTitle>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
     <ApplicationIcon>Assets\AIHelper.ico</ApplicationIcon>
     <RootNamespace>LaptopSessionViewer</RootNamespace>
     <Nullable>enable</Nullable>
@@ -22,3 +25,4 @@
   </ItemGroup>
 
 </Project>
+

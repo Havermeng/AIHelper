@@ -4,5 +4,6 @@ public enum AppSection
 {
     Sessions,
     NewSession,
-    Setup
+    Setup,
+    Settings
 }
