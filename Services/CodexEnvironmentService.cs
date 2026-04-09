@@ -739,6 +739,25 @@ function Resolve-NpmCommand {
     return $null
 }
 
+function Resolve-GitCommand {
+    $command = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $command = Get-Command git -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $fallback = Join-Path ${env:ProgramFiles} 'Git\cmd\git.exe'
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    return $null
+}
+
 function Resolve-OpenClawCommand {
     foreach ($candidate in @('openclaw.cmd', 'openclaw')) {
         $command = Get-Command $candidate -ErrorAction SilentlyContinue
@@ -804,16 +823,32 @@ if (-not [int]::TryParse($majorString, [ref]$majorVersion) -or $majorVersion -lt
 Write-Host "[OK] Node.js $nodeVersion found" -ForegroundColor Green
 Write-Host "[OK] npm command: $npmCmd" -ForegroundColor Green
 
+Write-Step 'Checking Git'
+$gitCmd = Resolve-GitCommand
+if (-not $gitCmd) {
+    throw 'Git is required before installing OpenClaw. Install Git in AIHelper first, then try again.'
+}
+
+Write-Host "[OK] git command: $gitCmd" -ForegroundColor Green
+
 Write-Step 'Installing OpenClaw from npm'
 Write-Host 'npm install can stay quiet for a while during package download and unpacking.' -ForegroundColor Yellow
 Write-Host 'Wait for the next step header or an explicit error before closing this terminal.' -ForegroundColor Yellow
 
 $prevScriptShell = $env:NPM_CONFIG_SCRIPT_SHELL
 $prevLogLevel = $env:NPM_CONFIG_LOGLEVEL
+$prevUpdateNotifier = $env:NPM_CONFIG_UPDATE_NOTIFIER
+$prevFund = $env:NPM_CONFIG_FUND
+$prevAudit = $env:NPM_CONFIG_AUDIT
+$prevNodeLlamaSkipDownload = $env:NODE_LLAMA_CPP_SKIP_DOWNLOAD
 
 try {
     $env:NPM_CONFIG_SCRIPT_SHELL = 'cmd.exe'
     $env:NPM_CONFIG_LOGLEVEL = 'info'
+    $env:NPM_CONFIG_UPDATE_NOTIFIER = 'false'
+    $env:NPM_CONFIG_FUND = 'false'
+    $env:NPM_CONFIG_AUDIT = 'false'
+    $env:NODE_LLAMA_CPP_SKIP_DOWNLOAD = '1'
     & $npmCmd install -g openclaw@latest --loglevel info
 
     if ($LASTEXITCODE -ne 0) {
@@ -822,6 +857,10 @@ try {
 } finally {
     $env:NPM_CONFIG_SCRIPT_SHELL = $prevScriptShell
     $env:NPM_CONFIG_LOGLEVEL = $prevLogLevel
+    $env:NPM_CONFIG_UPDATE_NOTIFIER = $prevUpdateNotifier
+    $env:NPM_CONFIG_FUND = $prevFund
+    $env:NPM_CONFIG_AUDIT = $prevAudit
+    $env:NODE_LLAMA_CPP_SKIP_DOWNLOAD = $prevNodeLlamaSkipDownload
 }
 
 $npmPrefix = (& $npmCmd config get prefix 2>$null).Trim()
@@ -839,7 +878,7 @@ Write-Host "[OK] OpenClaw command: $openClawCmd" -ForegroundColor Green
 Write-Step 'Starting OpenClaw onboard'
 Write-Host 'Interactive OpenClaw setup starts now.' -ForegroundColor Cyan
 Write-Host 'If OpenClaw asks additional questions, complete them in this same terminal.' -ForegroundColor Yellow
-& $openClawCmd onboard --install-daemon
+& $openClawCmd onboard
 
 if ($LASTEXITCODE -ne 0) {
     throw "OpenClaw onboard finished with exit code $LASTEXITCODE."

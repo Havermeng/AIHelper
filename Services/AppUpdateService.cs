@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using LaptopSessionViewer.Models;
 
 namespace LaptopSessionViewer.Services;
@@ -11,7 +12,10 @@ public sealed class AppUpdateService
 {
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/Havermeng/AIHelper/releases/latest";
     private const string LatestReleasePageUrl = "https://github.com/Havermeng/AIHelper/releases/latest";
+    private const string ReleaseDownloadUrlTemplate = "https://github.com/Havermeng/AIHelper/releases/download/{0}/AIHelper-Setup.exe";
     private const string SetupAssetName = "AIHelper-Setup.exe";
+    private static readonly Regex HtmlTitleRegex =
+        new("<title>\\s*(?<title>[^<]+?)\\s*</title>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly AppLogService _logService = new();
 
@@ -23,43 +27,27 @@ public sealed class AppUpdateService
 
     public async Task<AppUpdateSnapshot> GetLatestReleaseAsync(CancellationToken cancellationToken = default)
     {
-        using var client = CreateHttpClient();
-        using var response = await client.GetAsync(
-            LatestReleaseApiUrl,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var root = document.RootElement;
         var currentVersion = CurrentVersion;
-        var latestVersion = NormalizeVersion(ReadString(root, "tag_name"));
 
-        if (string.IsNullOrWhiteSpace(latestVersion))
+        try
         {
-            latestVersion = currentVersion;
+            using var client = CreateHttpClient();
+            return await TryGetLatestReleaseFromApiAsync(client, currentVersion, cancellationToken);
         }
-
-        var releasePageUrl = ReadString(root, "html_url");
-        var snapshot = new AppUpdateSnapshot
+        catch (Exception apiException)
         {
-            CurrentVersion = currentVersion,
-            CurrentVersionDisplay = $"v{currentVersion}",
-            LatestVersion = latestVersion,
-            LatestVersionDisplay = $"v{latestVersion}",
-            ReleaseTitle = ReadString(root, "name"),
-            ReleasePageUrl = string.IsNullOrWhiteSpace(releasePageUrl) ? LatestReleasePageUrl : releasePageUrl,
-            InstallerDownloadUrl = GetInstallerDownloadUrl(root),
-            PublishedAtUtc = ReadDateTimeOffset(root, "published_at"),
-            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0
-        };
+            _logService.Error(
+                nameof(AppUpdateService),
+                "GitHub API update check failed. Falling back to the public release page.",
+                apiException);
 
-        _logService.Info(
-            nameof(AppUpdateService),
-            $"Checked updates. Current={snapshot.CurrentVersionDisplay}, Latest={snapshot.LatestVersionDisplay}, Available={snapshot.IsUpdateAvailable}.");
-
-        return snapshot;
+            using var fallbackClient = CreateHttpClient();
+            var snapshot = await TryGetLatestReleaseFromPageAsync(fallbackClient, currentVersion, cancellationToken);
+            _logService.Info(
+                nameof(AppUpdateService),
+                $"Checked updates through release page fallback. Current={snapshot.CurrentVersionDisplay}, Latest={snapshot.LatestVersionDisplay}, Available={snapshot.IsUpdateAvailable}.");
+            return snapshot;
+        }
     }
 
     public async Task DownloadInstallerAsync(
@@ -127,6 +115,87 @@ public sealed class AppUpdateService
         client.DefaultRequestHeaders.UserAgent.ParseAdd("AIHelper-Updater/1.0");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return client;
+    }
+
+    private async Task<AppUpdateSnapshot> TryGetLatestReleaseFromApiAsync(
+        HttpClient client,
+        string currentVersion,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(
+            LatestReleaseApiUrl,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        var latestVersion = NormalizeVersion(ReadString(root, "tag_name"));
+
+        if (string.IsNullOrWhiteSpace(latestVersion))
+        {
+            latestVersion = currentVersion;
+        }
+
+        var releasePageUrl = ReadString(root, "html_url");
+        var snapshot = new AppUpdateSnapshot
+        {
+            CurrentVersion = currentVersion,
+            CurrentVersionDisplay = $"v{currentVersion}",
+            LatestVersion = latestVersion,
+            LatestVersionDisplay = $"v{latestVersion}",
+            ReleaseTitle = ReadString(root, "name"),
+            ReleasePageUrl = string.IsNullOrWhiteSpace(releasePageUrl) ? LatestReleasePageUrl : releasePageUrl,
+            InstallerDownloadUrl = GetInstallerDownloadUrl(root),
+            PublishedAtUtc = ReadDateTimeOffset(root, "published_at"),
+            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0
+        };
+
+        _logService.Info(
+            nameof(AppUpdateService),
+            $"Checked updates through GitHub API. Current={snapshot.CurrentVersionDisplay}, Latest={snapshot.LatestVersionDisplay}, Available={snapshot.IsUpdateAvailable}.");
+
+        return snapshot;
+    }
+
+    private async Task<AppUpdateSnapshot> TryGetLatestReleaseFromPageAsync(
+        HttpClient client,
+        string currentVersion,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(
+            LatestReleasePageUrl,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var finalUri = response.RequestMessage?.RequestUri;
+        var resolvedUrl = finalUri?.AbsoluteUri ?? LatestReleasePageUrl;
+        var releaseTag = GetLastUriSegment(finalUri) ?? $"v{currentVersion}";
+        var latestVersion = NormalizeVersion(releaseTag);
+
+        if (string.IsNullOrWhiteSpace(latestVersion))
+        {
+            latestVersion = currentVersion;
+            releaseTag = $"v{currentVersion}";
+        }
+
+        var html = await response.Content.ReadAsStringAsync(cancellationToken);
+        var releaseTitle = ParseHtmlTitle(html);
+
+        return new AppUpdateSnapshot
+        {
+            CurrentVersion = currentVersion,
+            CurrentVersionDisplay = $"v{currentVersion}",
+            LatestVersion = latestVersion,
+            LatestVersionDisplay = $"v{latestVersion}",
+            ReleaseTitle = string.IsNullOrWhiteSpace(releaseTitle) ? releaseTag : releaseTitle,
+            ReleasePageUrl = resolvedUrl,
+            InstallerDownloadUrl = string.Format(ReleaseDownloadUrlTemplate, releaseTag),
+            PublishedAtUtc = null,
+            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0
+        };
     }
 
     private static string GetCurrentVersion()
@@ -258,6 +327,38 @@ public sealed class AppUpdateService
         }
 
         return normalized.Trim();
+    }
+
+    private static string ParseHtmlTitle(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var match = HtmlTitleRegex.Match(html);
+        if (!match.Success)
+        {
+            return string.Empty;
+        }
+
+        var title = match.Groups["title"].Value.Trim();
+        return title
+            .Replace("· Havermeng/AIHelper · GitHub", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Trim();
+    }
+
+    private static string? GetLastUriSegment(Uri? uri)
+    {
+        if (uri is null)
+        {
+            return null;
+        }
+
+        var segments = uri.AbsolutePath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return segments.Length == 0 ? null : segments[^1];
     }
 }
 
