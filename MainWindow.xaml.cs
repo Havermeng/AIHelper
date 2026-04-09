@@ -13,6 +13,7 @@ namespace LaptopSessionViewer;
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
+    private readonly AppLogService _logService = new();
     private readonly CodexEnvironmentService _environmentService = new();
     private readonly AppUpdateService _updateService = new();
     private readonly DnsManagementService _dnsManagementService = new();
@@ -102,9 +103,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RefreshLocalAiModelOptions();
         RefreshCreativeAiToolOptions();
         RefreshAiAgentToolOptions();
-        LoadNewSessionConfigurationInfo();
+        LoadNewSessionConfigurationInfoSafe();
         ApplyDangerousAccessDefaultsToNewSession();
-        LoadDnsPresets();
+        LoadDnsPresetsSafe();
         RefreshLocalizedChromeText();
         RefreshSectionChromeText();
 
@@ -2322,6 +2323,43 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(NewSessionProfileHelpText));
     }
 
+    private void LoadNewSessionConfigurationInfoSafe()
+    {
+        try
+        {
+            LoadNewSessionConfigurationInfo();
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to load Codex config for the New Session page.", exception);
+            LoadFallbackNewSessionConfigurationInfo();
+        }
+    }
+
+    private void LoadFallbackNewSessionConfigurationInfo()
+    {
+        _configuredCodexModel = string.Empty;
+
+        ReplaceStringCollection(
+            ModelSuggestions,
+            [
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex",
+                "gpt-5.3-codex-spark",
+                "gpt-5.2"
+            ]);
+        ReplaceStringCollection(ProfileSuggestions, []);
+
+        if (string.IsNullOrWhiteSpace(NewSessionModel))
+        {
+            NewSessionModel = string.Empty;
+        }
+
+        OnPropertyChanged(nameof(NewSessionModelHelpText));
+        OnPropertyChanged(nameof(NewSessionProfileHelpText));
+    }
+
     private void ApplyDangerousAccessDefaultsToNewSession()
     {
         if (_isApplyingDangerousAccessDefaults)
@@ -2382,6 +2420,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                                         Strings["DnsPresetAutomatic"],
                                         StringComparison.Ordinal)) ??
                                 DnsPresets.FirstOrDefault();
+        }
+    }
+
+    private void LoadDnsPresetsSafe()
+    {
+        try
+        {
+            LoadDnsPresets();
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to load DNS presets.", exception);
+            ReplaceDnsPresetCollection(DnsPresetCatalog.CreateDefaultPresets(Strings));
+            SelectedDnsPreset = DnsPresets.FirstOrDefault();
         }
     }
 

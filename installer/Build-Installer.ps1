@@ -95,8 +95,7 @@ WizardStyle=modern
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "$appExePath"; DestDir: "{app}"; Flags: ignoreversion
-Source: "$assetsExampleJson"; DestDir: "{app}\Assets"; Flags: ignoreversion
+Source: "$publishRoot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\AIHelper"; Filename: "{app}\AIHelper.exe"
@@ -117,8 +116,7 @@ Filename: "{app}\AIHelper.exe"; Description: "Launch AIHelper"; Flags: nowait po
     return
 }
 
-Copy-Item $appExePath -Destination (Join-Path $packageRoot "AIHelper.exe") -Force
-Copy-Item $assetsExampleJson -Destination (Join-Path $packageRoot "dns-presets-example.json") -Force
+Copy-Item (Join-Path $publishRoot "*") -Destination $packageRoot -Recurse -Force
 Copy-Item (Join-Path $supportRoot "install.cmd") -Destination (Join-Path $packageRoot "install.cmd") -Force
 Copy-Item (Join-Path $supportRoot "Install-AIHelper.ps1") -Destination (Join-Path $packageRoot "Install-AIHelper.ps1") -Force
 Copy-Item (Join-Path $supportRoot "uninstall.cmd") -Destination (Join-Path $packageRoot "uninstall.cmd") -Force
@@ -158,11 +156,10 @@ PostInstallCmd=<None>
 AdminQuietInstCmd=
 UserQuietInstCmd=
 FILE0="AIHelper.exe"
-FILE1="dns-presets-example.json"
-FILE2="install.cmd"
-FILE3="Install-AIHelper.ps1"
-FILE4="uninstall.cmd"
-FILE5="Uninstall-AIHelper.ps1"
+FILE1="install.cmd"
+FILE2="Install-AIHelper.ps1"
+FILE3="uninstall.cmd"
+FILE4="Uninstall-AIHelper.ps1"
 [SourceFiles]
 SourceFiles0=$packageRoot\
 [SourceFiles0]
@@ -171,7 +168,6 @@ SourceFiles0=$packageRoot\
 %FILE2%=
 %FILE3%=
 %FILE4%=
-%FILE5%=
 "@
 
 [IO.File]::WriteAllText($sedPath, $sedContent, [Text.Encoding]::ASCII)

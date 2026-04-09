@@ -66,7 +66,6 @@ if (-not (Test-IsAdministrator)) {
 
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $appSourcePath = Join-Path $scriptRoot "AIHelper.exe"
-$exampleJsonSourcePath = Join-Path $scriptRoot "dns-presets-example.json"
 $uninstallScriptSourcePath = Join-Path $scriptRoot "Uninstall-AIHelper.ps1"
 $uninstallCmdSourcePath = Join-Path $scriptRoot "uninstall.cmd"
 
@@ -75,19 +74,26 @@ if (-not (Test-Path $appSourcePath)) {
 }
 
 $resolvedInstallDir = [IO.Path]::GetFullPath($InstallDir)
-$assetsInstallDir = Join-Path $resolvedInstallDir "Assets"
 $appTargetPath = Join-Path $resolvedInstallDir "AIHelper.exe"
 $uninstallKeyPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AIHelper"
 
 Get-Process AIHelper -ErrorAction SilentlyContinue | Stop-Process -Force
 
 New-Item -ItemType Directory -Path $resolvedInstallDir -Force | Out-Null
-New-Item -ItemType Directory -Path $assetsInstallDir -Force | Out-Null
 
-Copy-Item -Path $appSourcePath -Destination $appTargetPath -Force
+Get-ChildItem -Path $scriptRoot -Force | ForEach-Object {
+    if ($_.Name -in @("install.cmd", "Install-AIHelper.ps1")) {
+        return
+    }
 
-if (Test-Path $exampleJsonSourcePath) {
-    Copy-Item -Path $exampleJsonSourcePath -Destination (Join-Path $assetsInstallDir "dns-presets-example.json") -Force
+    $destinationPath = Join-Path $resolvedInstallDir $_.Name
+
+    if ($_.PSIsContainer) {
+        Copy-Item -Path $_.FullName -Destination $destinationPath -Recurse -Force
+    }
+    else {
+        Copy-Item -Path $_.FullName -Destination $destinationPath -Force
+    }
 }
 
 Copy-Item -Path $uninstallScriptSourcePath -Destination (Join-Path $resolvedInstallDir "Uninstall-AIHelper.ps1") -Force

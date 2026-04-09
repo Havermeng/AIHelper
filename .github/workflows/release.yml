@@ -22,6 +22,10 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Install Inno Setup
+        shell: powershell
+        run: choco install innosetup --no-progress -y
+
       - name: Build installer
         shell: powershell
         run: .\installer\Build-Installer.ps1

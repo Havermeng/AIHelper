@@ -12,6 +12,8 @@ public sealed class AppLogService
             "AIHelper",
             "aihelper.log");
 
+    public string LogPath => _logPath;
+
     public void Info(string source, string message)
     {
         Write("INFO", source, message);
