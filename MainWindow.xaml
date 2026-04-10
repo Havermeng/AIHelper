@@ -1454,6 +1454,65 @@
                                                         Content="{Binding Strings[SetupUninstallLmStudioButton]}" />
                                             </Grid>
 
+                                            <Border Margin="0,16,0,0"
+                                                    Padding="16"
+                                                    CornerRadius="20"
+                                                    Background="#F7F3EC">
+                                                <StackPanel>
+                                                    <TextBlock FontSize="13"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#16212B"
+                                                               Text="{Binding Strings[SetupOllamaAssistantTitle]}" />
+                                                    <TextBlock Margin="0,6,0,0"
+                                                               Foreground="#475467"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding Strings[SetupOllamaAssistantSubtitle]}" />
+
+                                                    <ItemsControl Margin="0,12,0,0"
+                                                                  ItemsSource="{Binding OllamaQuickChecks}"
+                                                                  ItemTemplate="{StaticResource SetupCheckItemTemplate}" />
+
+                                                    <TextBlock Margin="0,2,0,0"
+                                                               Foreground="#475467"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding OllamaQuickGuidanceText}" />
+
+                                                    <Grid Margin="0,12,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="10" />
+                                                            <ColumnDefinition Width="*" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="10" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+
+                                                        <Button Grid.Row="0"
+                                                                Grid.Column="0"
+                                                                Click="LaunchOllamaAppButton_Click"
+                                                                IsEnabled="{Binding CanLaunchOllamaApp}"
+                                                                Content="{Binding Strings[SetupOllamaLaunchAppButton]}" />
+                                                        <Button Grid.Row="0"
+                                                                Grid.Column="2"
+                                                                Click="StartOllamaServerButton_Click"
+                                                                IsEnabled="{Binding CanStartOllamaServer}"
+                                                                Content="{Binding Strings[SetupOllamaStartServerButton]}" />
+                                                        <Button Grid.Row="2"
+                                                                Grid.Column="0"
+                                                                Click="StopOllamaProcessesButton_Click"
+                                                                IsEnabled="{Binding CanStopOllamaProcesses}"
+                                                                Content="{Binding Strings[SetupOllamaStopButton]}" />
+                                                        <Button Grid.Row="2"
+                                                                Grid.Column="2"
+                                                                Click="InstallStarterOllamaModelButton_Click"
+                                                                IsEnabled="{Binding CanInstallStarterOllamaModel}"
+                                                                Content="{Binding Strings[SetupOllamaStarterModelButton]}" />
+                                                    </Grid>
+                                                </StackPanel>
+                                            </Border>
+
                                             <TextBlock Margin="0,14,0,0"
                                                        FontSize="12"
                                                        FontWeight="SemiBold"
@@ -2174,5 +2233,6 @@
     </Grid>
 </Grid>
 </Window>
+
 
 

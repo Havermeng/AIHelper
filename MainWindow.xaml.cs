@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -140,6 +140,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<SetupCheckItem> SetupCodexChecks { get; } = [];
 
     public ObservableCollection<SetupCheckItem> SetupLocalAiChecks { get; } = [];
+
+    public ObservableCollection<SetupCheckItem> OllamaQuickChecks { get; } = [];
 
     public ObservableCollection<LocalAiModelOption> LocalAiModelOptions { get; } = [];
 
@@ -390,13 +392,33 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         !IsSetupBusy &&
         _lastEnvironmentSnapshot?.OllamaAvailable == true;
 
+    public bool CanLaunchOllamaApp =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OllamaAppAvailable == true;
+
+    public bool CanStartOllamaServer =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OllamaAvailable == true;
+
+    public bool CanStopOllamaProcesses =>
+        !IsSetupBusy &&
+        (_lastEnvironmentSnapshot?.OllamaServerRunning == true ||
+         _lastEnvironmentSnapshot?.OllamaTrayRunning == true);
+
+    public bool CanInstallStarterOllamaModel =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OllamaAvailable == true;
+
+    public string OllamaQuickGuidanceText => BuildOllamaQuickGuidanceText(_lastEnvironmentSnapshot);
+
     public bool CanManageCreativeAiTools => !IsSetupBusy;
 
     public bool CanManageAiAgents => !IsSetupBusy;
 
     public bool CanUninstallOllama =>
         !IsSetupBusy &&
-        _lastEnvironmentSnapshot?.OllamaAvailable == true;
+        (_lastEnvironmentSnapshot?.OllamaAvailable == true ||
+         _lastEnvironmentSnapshot?.OllamaAppAvailable == true);
 
     public bool CanUninstallLmStudio =>
         !IsSetupBusy &&
@@ -528,6 +550,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanRepairWinget));
                 OnPropertyChanged(nameof(CanInstallLocalAiTools));
                 OnPropertyChanged(nameof(CanInstallLocalAiModels));
+                OnPropertyChanged(nameof(CanLaunchOllamaApp));
+                OnPropertyChanged(nameof(CanStartOllamaServer));
+                OnPropertyChanged(nameof(CanStopOllamaProcesses));
+                OnPropertyChanged(nameof(CanInstallStarterOllamaModel));
                 OnPropertyChanged(nameof(CanManageCreativeAiTools));
                 OnPropertyChanged(nameof(CanManageAiAgents));
                 OnPropertyChanged(nameof(CanUninstallOllama));
@@ -600,13 +626,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public Visibility SetupDnsSectionContentVisibility =>
         IsSetupDnsSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
 
-    public string SetupCoreSectionToggleGlyph => IsSetupCoreSectionExpanded ? "−" : "+";
+    public string SetupCoreSectionToggleGlyph => IsSetupCoreSectionExpanded ? "в€’" : "+";
 
-    public string SetupCodexSectionToggleGlyph => IsSetupCodexSectionExpanded ? "−" : "+";
+    public string SetupCodexSectionToggleGlyph => IsSetupCodexSectionExpanded ? "в€’" : "+";
 
-    public string SetupLocalAiSectionToggleGlyph => IsSetupLocalAiSectionExpanded ? "−" : "+";
+    public string SetupLocalAiSectionToggleGlyph => IsSetupLocalAiSectionExpanded ? "в€’" : "+";
 
-    public string SetupDnsSectionToggleGlyph => IsSetupDnsSectionExpanded ? "−" : "+";
+    public string SetupDnsSectionToggleGlyph => IsSetupDnsSectionExpanded ? "в€’" : "+";
 
     public bool IsUpdateBusy
     {
@@ -1779,6 +1805,71 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void LaunchOllamaAppButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOllamaApp();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaAppStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void StartOllamaServerButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOllamaServeTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaServerStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void StopOllamaProcessesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupStopOllamaWarningTitle"],
+                Strings["SetupStopOllamaWarningMessage"]))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOllamaStopTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaStopStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallStarterOllamaModelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_environmentService.IsOllamaInstalled())
+        {
+            SetSetupStatus("#FFD6D6", Strings["SetupStatusOllamaMissing"]);
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOllamaModelInstallTerminal("phi4-mini");
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusStarterModelInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
     private void InstallLmStudioButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -2135,6 +2226,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanOpenReleasePage));
         OnPropertyChanged(nameof(CanInstallLocalAiTools));
         OnPropertyChanged(nameof(CanInstallLocalAiModels));
+        OnPropertyChanged(nameof(CanLaunchOllamaApp));
+        OnPropertyChanged(nameof(CanStartOllamaServer));
+        OnPropertyChanged(nameof(CanStopOllamaProcesses));
+        OnPropertyChanged(nameof(CanInstallStarterOllamaModel));
+        OnPropertyChanged(nameof(OllamaQuickGuidanceText));
         OnPropertyChanged(nameof(CanManageCreativeAiTools));
         OnPropertyChanged(nameof(CanManageAiAgents));
 
@@ -2260,6 +2356,91 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     Description = Strings["NewSessionLocalProviderOllamaHelp"]
                 }
             ]);
+    }
+
+    private void RefreshOllamaQuickChecks(CodexEnvironmentSnapshot? snapshot = null)
+    {
+        var environment = snapshot ?? _lastEnvironmentSnapshot;
+        OllamaQuickChecks.Clear();
+
+        if (environment is null)
+        {
+            return;
+        }
+
+        OllamaQuickChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOllamaRuntimeTitle"],
+                environment.OllamaAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                environment.OllamaAvailable
+                    ? environment.OllamaExecutablePath
+                    : Strings["SetupOllamaRuntimeDetailMissing"],
+                environment.OllamaAvailable));
+        OllamaQuickChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOllamaPathTitle"],
+                environment.OllamaCommandVisible ? Strings["SetupBadgeReady"] : Strings["SetupBadgeRefresh"],
+                environment.OllamaAvailable
+                    ? environment.OllamaCommandVisible
+                        ? Strings["SetupOllamaPathDetailReady"]
+                        : Strings["SetupOllamaPathDetailRestart"]
+                    : Strings["SetupOllamaPathDetailMissing"],
+                environment.OllamaCommandVisible,
+                isWarning: environment.OllamaAvailable && !environment.OllamaCommandVisible));
+        OllamaQuickChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOllamaServerTitle"],
+                environment.OllamaServerRunning ? Strings["SetupBadgeReady"] : Strings["SetupBadgeStart"],
+                environment.OllamaAvailable
+                    ? environment.OllamaServerRunning
+                        ? Strings["SetupOllamaServerDetailRunning"]
+                        : environment.OllamaTrayRunning || environment.OllamaAppAvailable
+                            ? Strings["SetupOllamaServerDetailTrayOnly"]
+                            : Strings["SetupOllamaServerDetailStopped"]
+                    : Strings["SetupOllamaServerDetailMissing"],
+                environment.OllamaServerRunning,
+                isWarning: environment.OllamaAvailable && !environment.OllamaServerRunning));
+        OllamaQuickChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOllamaModelsTitle"],
+                environment.OllamaModelCount > 0 ? Strings["SetupBadgeReady"] : Strings["SetupBadgeDownload"],
+                environment.OllamaAvailable
+                    ? environment.OllamaModelCount > 0
+                        ? Strings.Format("SetupOllamaModelsDetailCount", environment.OllamaModelCount, environment.OllamaModelsSummary)
+                        : Strings["SetupOllamaModelsDetailEmpty"]
+                    : Strings["SetupOllamaModelsDetailMissing"],
+                environment.OllamaModelCount > 0,
+                isWarning: environment.OllamaAvailable && environment.OllamaModelCount == 0));
+    }
+
+    private string BuildOllamaQuickGuidanceText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupOllamaGuidanceNoData"];
+        }
+
+        if (!snapshot.OllamaAvailable)
+        {
+            return Strings["SetupOllamaGuidanceInstallFirst"];
+        }
+
+        if (!snapshot.OllamaCommandVisible)
+        {
+            return Strings["SetupOllamaGuidanceRefreshPath"];
+        }
+
+        if (!snapshot.OllamaServerRunning)
+        {
+            return Strings["SetupOllamaGuidanceStartServer"];
+        }
+
+        if (snapshot.OllamaModelCount == 0)
+        {
+            return Strings["SetupOllamaGuidanceDownloadModel"];
+        }
+
+        return Strings["SetupOllamaGuidanceReady"];
     }
 
     private void RefreshLocalAiModelOptions(IReadOnlyDictionary<string, string>? installedModels = null)
@@ -3044,6 +3225,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RefreshLocalAiModelOptions(snapshot.InstalledOllamaModels);
         RefreshCreativeAiToolOptions(snapshot);
         RefreshAiAgentToolOptions(snapshot);
+        RefreshOllamaQuickChecks(snapshot);
         SetupCoreChecks.Clear();
         SetupCodexChecks.Clear();
         SetupLocalAiChecks.Clear();
@@ -3078,12 +3260,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.CodexAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.CodexAvailable ? snapshot.CodexVersion : Strings["SetupDetailCodexMissing"],
                 snapshot.CodexAvailable));
-        SetupLocalAiChecks.Add(
-            CreateSetupCheckItem(
-                Strings["SetupCheckOllama"],
-                snapshot.OllamaAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
-                snapshot.OllamaAvailable ? snapshot.OllamaDetail : Strings["SetupDetailOllamaMissing"],
-                snapshot.OllamaAvailable));
         SetupLocalAiChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckLmStudio"],
@@ -3125,6 +3301,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.SessionsFolderExists));
 
         OnPropertyChanged(nameof(CanInstallLocalAiModels));
+        OnPropertyChanged(nameof(CanLaunchOllamaApp));
+        OnPropertyChanged(nameof(CanStartOllamaServer));
+        OnPropertyChanged(nameof(CanStopOllamaProcesses));
+        OnPropertyChanged(nameof(CanInstallStarterOllamaModel));
+        OnPropertyChanged(nameof(OllamaQuickGuidanceText));
         OnPropertyChanged(nameof(CanManageCreativeAiTools));
         OnPropertyChanged(nameof(CanManageAiAgents));
         OnPropertyChanged(nameof(CanUninstallOllama));
@@ -3265,6 +3446,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+
+
 
 
 

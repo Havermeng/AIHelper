@@ -1,4 +1,4 @@
-namespace LaptopSessionViewer.Models;
+﻿namespace LaptopSessionViewer.Models;
 
 public sealed class CodexEnvironmentSnapshot
 {
@@ -17,6 +17,14 @@ public sealed class CodexEnvironmentSnapshot
     public required bool SessionsFolderExists { get; init; }
     public required string SessionsFolderPath { get; init; }
     public required bool OllamaAvailable { get; init; }
+    public required bool OllamaCommandVisible { get; init; }
+    public required string OllamaExecutablePath { get; init; }
+    public required bool OllamaAppAvailable { get; init; }
+    public required string OllamaAppPath { get; init; }
+    public required bool OllamaServerRunning { get; init; }
+    public required bool OllamaTrayRunning { get; init; }
+    public required int OllamaModelCount { get; init; }
+    public required string OllamaModelsSummary { get; init; }
     public required string OllamaDetail { get; init; }
     public required bool LmStudioAvailable { get; init; }
     public required string LmStudioDetail { get; init; }

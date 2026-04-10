@@ -1,5 +1,6 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using LaptopSessionViewer.Models;
@@ -52,7 +53,9 @@ public sealed class CodexEnvironmentService
         var loginStatus = File.Exists(CodexCommandPath)
             ? RunCommand("cmd.exe", $"/c \"\"{CodexCommandPath}\" login status\"")
             : CommandResult.Missing;
+        var ollamaCommandPath = ResolveExecutableOnPath("ollama.exe");
         var ollamaPath = ResolveOllamaExecutablePath();
+        var ollamaAppPath = ResolveOllamaAppExecutablePath();
         var lmStudioPath = ResolveLmStudioExecutablePath();
         var openClawPath = ResolveOpenClawExecutablePath();
         var comfyUiPackage = GetInstalledWingetPackageInfo(ComfyUiDesktopWingetId);
@@ -64,6 +67,9 @@ public sealed class CodexEnvironmentService
             ? RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" --version\"")
             : CommandResult.Missing;
         var installedOllamaModels = GetInstalledOllamaModels(ollamaPath);
+        var ollamaServerRunning = !string.IsNullOrWhiteSpace(ollamaPath) && IsLocalTcpEndpointReachable(11434);
+        var ollamaTrayRunning = IsAnyProcessRunning("ollama");
+        var ollamaModelsSummary = BuildOllamaModelsSummary(installedOllamaModels);
 
         return new CodexEnvironmentSnapshot
         {
@@ -84,9 +90,24 @@ public sealed class CodexEnvironmentService
             SessionsFolderExists = Directory.Exists(SessionsFolder),
             SessionsFolderPath = SessionsFolder,
             OllamaAvailable = !string.IsNullOrWhiteSpace(ollamaPath),
+            OllamaCommandVisible = !string.IsNullOrWhiteSpace(ollamaCommandPath),
+            OllamaExecutablePath = ollamaPath ?? string.Empty,
+            OllamaAppAvailable = !string.IsNullOrWhiteSpace(ollamaAppPath),
+            OllamaAppPath = ollamaAppPath ?? string.Empty,
+            OllamaServerRunning = ollamaServerRunning,
+            OllamaTrayRunning = ollamaTrayRunning,
+            OllamaModelCount = installedOllamaModels.Count,
+            OllamaModelsSummary = ollamaModelsSummary,
             OllamaDetail = !string.IsNullOrWhiteSpace(ollamaPath)
-                ? $"{ollamaVersion.Output}{Environment.NewLine}{ollamaPath}"
-                : "Ollama is not installed or not on PATH.",
+                ? BuildOllamaDetail(
+                    ollamaVersion,
+                    ollamaPath,
+                    !string.IsNullOrWhiteSpace(ollamaCommandPath),
+                    !string.IsNullOrWhiteSpace(ollamaAppPath),
+                    ollamaServerRunning,
+                    ollamaTrayRunning,
+                    installedOllamaModels.Count)
+                : "Ollama is not installed yet. Install it above, then refresh this page.",
             LmStudioAvailable = !string.IsNullOrWhiteSpace(lmStudioPath),
             LmStudioDetail = !string.IsNullOrWhiteSpace(lmStudioPath)
                 ? $"{GetProductVersion(lmStudioPath)}{Environment.NewLine}{lmStudioPath}"
@@ -299,10 +320,17 @@ public sealed class CodexEnvironmentService
 
     public void LaunchOllamaInstallTerminal()
     {
-        LaunchWingetInstallTerminal(
-            "ollama",
-            OllamaWingetId,
-            "Ollama");
+        var scriptPath = CreateTempScriptPath("aihelper-install-ollama");
+        File.WriteAllText(scriptPath, BuildOllamaInstallScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true,
+                Verb = "runas"
+            });
     }
 
     public void LaunchLmStudioInstallTerminal()
@@ -319,6 +347,57 @@ public sealed class CodexEnvironmentService
             "ollama",
             OllamaWingetId,
             "Ollama");
+    }
+
+    public void LaunchOllamaApp()
+    {
+        var ollamaAppPath = ResolveOllamaAppExecutablePath();
+
+        if (string.IsNullOrWhiteSpace(ollamaAppPath))
+        {
+            throw new FileNotFoundException("Ollama app was not found.");
+        }
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = ollamaAppPath,
+                WorkingDirectory = Path.GetDirectoryName(ollamaAppPath) ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                UseShellExecute = true
+            });
+    }
+
+    public void LaunchOllamaServeTerminal()
+    {
+        var ollamaPath = ResolveOllamaExecutablePath();
+
+        if (string.IsNullOrWhiteSpace(ollamaPath))
+        {
+            throw new FileNotFoundException("ollama.exe was not found.");
+        }
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/k call {QuoteForCommandLine(ollamaPath)} serve",
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                UseShellExecute = true
+            });
+    }
+
+    public void LaunchOllamaStopTerminal()
+    {
+        var scriptPath = CreateTempScriptPath("aihelper-stop-ollama");
+        File.WriteAllText(scriptPath, BuildOllamaStopScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoLogo -NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true
+            });
     }
 
     public void LaunchLmStudioUninstallTerminal()
@@ -628,6 +707,51 @@ Write-Host ''
 Write-Host 'Node.js and Git install/update command finished.' -ForegroundColor Green
 Write-Host 'npm is installed together with Node.js LTS.' -ForegroundColor Green
 Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundColor Green
+""";
+    }
+
+    private static string BuildOllamaInstallScript()
+    {
+        return """
+$ErrorActionPreference = 'Stop'
+
+if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+    throw 'winget.exe is not available on this system.'
+}
+
+Write-Host ''
+Write-Host '== Installing or updating Ollama ==' -ForegroundColor Cyan
+winget install --id Ollama.Ollama -e --accept-package-agreements --accept-source-agreements
+
+Write-Host ''
+Write-Host 'Ollama install/update command finished.' -ForegroundColor Green
+Write-Host 'What to do next:' -ForegroundColor Cyan
+Write-Host '1. Return to AIHelper and refresh the Local AI status.' -ForegroundColor Yellow
+Write-Host '2. If old terminals still cannot see ollama, open a new terminal window.' -ForegroundColor Yellow
+Write-Host '3. A large main window is not required. Use AIHelper to start the local server if needed.' -ForegroundColor Yellow
+Write-Host '4. Download your first local model before connecting Ollama to OpenClaw.' -ForegroundColor Yellow
+""";
+    }
+
+    private static string BuildOllamaStopScript()
+    {
+        return """
+$ErrorActionPreference = 'Stop'
+
+Write-Host ''
+Write-Host '== Stopping Ollama processes ==' -ForegroundColor Yellow
+
+$targets = Get-Process | Where-Object { $_.ProcessName -match 'ollama' }
+
+if (-not $targets) {
+    Write-Host 'No Ollama processes are running right now.' -ForegroundColor Yellow
+} else {
+    $targets | Stop-Process -Force
+    Write-Host 'Ollama processes were stopped.' -ForegroundColor Green
+}
+
+Write-Host ''
+Write-Host 'Return to AIHelper and refresh the Local AI status.' -ForegroundColor Green
 """;
     }
 
@@ -1101,23 +1225,23 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 
     private static string? ResolveOllamaExecutablePath()
     {
-        var whereResult = RunCommand("cmd.exe", "/c where ollama.exe");
+        var commandPath = ResolveExecutableOnPath("ollama.exe");
 
-        if (whereResult.Success)
+        if (!string.IsNullOrWhiteSpace(commandPath))
         {
-            var discoveredPath = whereResult.Output
-                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault(File.Exists);
-
-            if (!string.IsNullOrWhiteSpace(discoveredPath))
-            {
-                return discoveredPath;
-            }
+            return commandPath;
         }
 
         return FindExistingPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ollama", "ollama.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Ollama", "ollama.exe"));
+    }
+
+    private static string? ResolveOllamaAppExecutablePath()
+    {
+        return FindExistingPath(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ollama", "Ollama.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Ollama", "Ollama.exe"));
     }
 
     private static string? ResolveLmStudioExecutablePath()
@@ -1130,37 +1254,138 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 
     private static string? ResolveOpenClawExecutablePath()
     {
-        var whereCmdResult = RunCommand("cmd.exe", "/c where openclaw.cmd");
+        var commandPath = ResolveExecutableOnPath("openclaw.cmd", "openclaw");
 
-        if (whereCmdResult.Success)
+        if (!string.IsNullOrWhiteSpace(commandPath))
         {
-            var discoveredCmdPath = whereCmdResult.Output
-                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault(File.Exists);
-
-            if (!string.IsNullOrWhiteSpace(discoveredCmdPath))
-            {
-                return discoveredCmdPath;
-            }
-        }
-
-        var whereExeResult = RunCommand("cmd.exe", "/c where openclaw");
-
-        if (whereExeResult.Success)
-        {
-            var discoveredExePath = whereExeResult.Output
-                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault(File.Exists);
-
-            if (!string.IsNullOrWhiteSpace(discoveredExePath))
-            {
-                return discoveredExePath;
-            }
+            return commandPath;
         }
 
         return FindExistingPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "openclaw.cmd"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "openclaw.cmd"));
+    }
+
+    private static string BuildOllamaDetail(
+        CommandResult ollamaVersion,
+        string ollamaPath,
+        bool commandVisible,
+        bool appAvailable,
+        bool serverRunning,
+        bool trayRunning,
+        int modelCount)
+    {
+        var lines = new List<string>();
+
+        if (ollamaVersion.Success &&
+            !string.IsNullOrWhiteSpace(ollamaVersion.Output) &&
+            !string.Equals(ollamaVersion.Output, "-", StringComparison.Ordinal))
+        {
+            lines.Add(ollamaVersion.Output);
+        }
+
+        lines.Add(ollamaPath);
+        lines.Add(commandVisible
+            ? "The ollama command is visible in new terminals."
+            : "Installed, but older terminals may need to be reopened before PATH updates are visible.");
+
+        if (serverRunning)
+        {
+            lines.Add("Local server is listening on 127.0.0.1:11434.");
+        }
+        else if (trayRunning || appAvailable)
+        {
+            lines.Add("Ollama app is present, but the local server is not listening yet.");
+        }
+        else
+        {
+            lines.Add("Local server is not running yet.");
+        }
+
+        lines.Add(modelCount == 0
+            ? "No local models downloaded yet."
+            : $"{modelCount} local model(s) downloaded.");
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildOllamaModelsSummary(IReadOnlyDictionary<string, string> installedModels)
+    {
+        if (installedModels.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var names = installedModels.Keys
+            .Take(2)
+            .ToList();
+
+        return installedModels.Count <= 2
+            ? string.Join(", ", names)
+            : $"{string.Join(", ", names)} +{installedModels.Count - 2}";
+    }
+
+    private static bool IsLocalTcpEndpointReachable(int port)
+    {
+        try
+        {
+            using var client = new TcpClient();
+            var connectTask = client.ConnectAsync("127.0.0.1", port);
+            return connectTask.Wait(750) && client.Connected;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsAnyProcessRunning(params string[] nameFragments)
+    {
+        try
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                using (process)
+                {
+                    if (nameFragments.Any(fragment =>
+                            !string.IsNullOrWhiteSpace(fragment) &&
+                            process.ProcessName.Contains(fragment, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static string? ResolveExecutableOnPath(params string[] commandNames)
+    {
+        foreach (var commandName in commandNames)
+        {
+            var whereResult = RunCommand("cmd.exe", $"/c where {commandName}");
+
+            if (!whereResult.Success)
+            {
+                continue;
+            }
+
+            var discoveredPath = whereResult.Output
+                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(File.Exists);
+
+            if (!string.IsNullOrWhiteSpace(discoveredPath))
+            {
+                return discoveredPath;
+            }
+        }
+
+        return null;
     }
 
     private static string? FindExistingPath(params string[] paths)
@@ -1191,3 +1416,5 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         public static WingetPackageInfo Missing => new(false, "Not found");
     }
 }
+
+
