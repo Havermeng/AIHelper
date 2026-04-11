@@ -2,6 +2,8 @@
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using LaptopSessionViewer.Models;
 
@@ -39,6 +41,12 @@ public sealed class CodexEnvironmentService
     public string ConfigFilePath =>
         Path.Combine(CodexHomeFolder, "config.toml");
 
+    public string OpenClawHomeFolder =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw");
+
+    public string OpenClawConfigFilePath =>
+        Path.Combine(OpenClawHomeFolder, "openclaw.json");
+
     public CodexEnvironmentSnapshot GetEnvironmentSnapshot()
     {
         var winget = RunCommand("cmd.exe", "/c winget --version");
@@ -58,6 +66,13 @@ public sealed class CodexEnvironmentService
         var ollamaAppPath = ResolveOllamaAppExecutablePath();
         var lmStudioPath = ResolveLmStudioExecutablePath();
         var openClawPath = ResolveOpenClawExecutablePath();
+        var openClawConfig = ReadOpenClawConfig(OpenClawConfigFilePath);
+        var openClawNodeStatus = !string.IsNullOrWhiteSpace(openClawPath)
+            ? RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" node status\"", timeoutMilliseconds: 7000)
+            : CommandResult.Missing;
+        var openClawBrowserStatus = !string.IsNullOrWhiteSpace(openClawPath)
+            ? RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" browser status\"", timeoutMilliseconds: 7000)
+            : CommandResult.Missing;
         var comfyUiPackage = GetInstalledWingetPackageInfo(ComfyUiDesktopWingetId);
         var pinokioPackage = GetInstalledWingetPackageInfo(PinokioWingetId);
         var ollamaVersion = !string.IsNullOrWhiteSpace(ollamaPath)
@@ -118,8 +133,19 @@ public sealed class CodexEnvironmentService
             PinokioDetail = pinokioPackage.Detail,
             OpenClawAvailable = !string.IsNullOrWhiteSpace(openClawPath),
             OpenClawDetail = !string.IsNullOrWhiteSpace(openClawPath)
-                ? $"{openClawVersion.Output}{Environment.NewLine}{openClawPath}"
+                ? BuildOpenClawDetail(openClawVersion, openClawPath, openClawConfig)
                 : "OpenClaw is not installed or not on PATH.",
+            OpenClawConfigExists = openClawConfig.Exists,
+            OpenClawConfigPath = openClawConfig.Path,
+            OpenClawPrimaryModel = openClawConfig.PrimaryModel,
+            OpenClawToolProfile = openClawConfig.ToolProfile,
+            OpenClawWebSearchEnabled = openClawConfig.WebSearchEnabled,
+            OpenClawTelegramConfigured = openClawConfig.TelegramConfigured,
+            OpenClawNodeInstalled = DetermineOpenClawNodeInstalled(openClawNodeStatus),
+            OpenClawNodeDetail = BuildOpenClawNodeDetail(openClawNodeStatus),
+            OpenClawBrowserCliAvailable = !string.IsNullOrWhiteSpace(openClawPath),
+            OpenClawBrowserReady = DetermineOpenClawBrowserReady(openClawBrowserStatus),
+            OpenClawBrowserDetail = BuildOpenClawBrowserDetail(openClawBrowserStatus),
             InstalledOllamaModels = installedOllamaModels
         };
     }
@@ -454,6 +480,62 @@ public sealed class CodexEnvironmentService
             });
     }
 
+    public void LaunchOpenClawStatusTerminal()
+    {
+        LaunchOpenClawCommandTerminal(
+            "aihelper-openclaw-status",
+            "OpenClaw status",
+            ["status", "--all"]);
+    }
+
+    public void LaunchOpenClawNodeInstallTerminal()
+    {
+        LaunchOpenClawCommandTerminal(
+            "aihelper-openclaw-node-install",
+            "OpenClaw node install",
+            ["node", "install"]);
+    }
+
+    public void LaunchOpenClawNodeStatusTerminal()
+    {
+        LaunchOpenClawCommandTerminal(
+            "aihelper-openclaw-node-status",
+            "OpenClaw node status",
+            ["node", "status"]);
+    }
+
+    public void LaunchOpenClawBrowserStatusTerminal()
+    {
+        LaunchOpenClawCommandTerminal(
+            "aihelper-openclaw-browser-status",
+            "OpenClaw browser status",
+            ["browser", "status"]);
+    }
+
+    public OpenClawConfigApplyResult ApplyOpenClawQuickStartMode()
+    {
+        return ApplyOpenClawMode(
+            "Quick local start",
+            ResolvePreferredOllamaModel(["qwen2.5:3b"], "qwen2.5:3b"),
+            "minimal");
+    }
+
+    public OpenClawConfigApplyResult ApplyOpenClawAdvancedMode()
+    {
+        return ApplyOpenClawMode(
+            "Local advanced agent",
+            ResolvePreferredOllamaModel(["qwen3.5:latest", "qwen3.5"], "qwen3.5:latest"),
+            "coding");
+    }
+
+    public OpenClawConfigApplyResult PrepareOpenClawAlmostFullMode()
+    {
+        return ApplyOpenClawMode(
+            "Almost full PC assistant",
+            ResolvePreferredOllamaModel(["qwen3.5:latest", "qwen3.5"], "qwen3.5:latest"),
+            "coding");
+    }
+
     public void LaunchOllamaModelInstallTerminal(string modelTag)
     {
         var ollamaPath = ResolveOllamaExecutablePath();
@@ -607,6 +689,78 @@ public sealed class CodexEnvironmentService
             });
     }
 
+    private void LaunchOpenClawCommandTerminal(string scriptPrefix, string title, IReadOnlyList<string> arguments)
+    {
+        var openClawPath = ResolveOpenClawExecutablePath();
+
+        if (string.IsNullOrWhiteSpace(openClawPath))
+        {
+            throw new FileNotFoundException("openclaw was not found.");
+        }
+
+        var scriptPath = CreateTempScriptPath(scriptPrefix);
+        File.WriteAllText(scriptPath, BuildOpenClawCommandScript(openClawPath, title, arguments), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoLogo -NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                UseShellExecute = true
+            });
+    }
+
+    private OpenClawConfigApplyResult ApplyOpenClawMode(string modeName, string primaryModelTag, string toolsProfile)
+    {
+        Directory.CreateDirectory(OpenClawHomeFolder);
+
+        JsonObject root;
+        string backupPath = string.Empty;
+
+        if (File.Exists(OpenClawConfigFilePath))
+        {
+            root = LoadOpenClawConfigRoot();
+            backupPath = BackupOpenClawConfig();
+        }
+        else
+        {
+            root = new JsonObject();
+        }
+
+        var agents = EnsureObject(root, "agents");
+        var defaults = EnsureObject(agents, "defaults");
+        defaults["contextTokens"] = 32768;
+
+        var model = EnsureObject(defaults, "model");
+        model["primary"] = BuildOllamaPrimaryModel(primaryModelTag);
+        model["contextWindow"] = 32768;
+        model["maxTokens"] = 4096;
+
+        var tools = EnsureObject(root, "tools");
+        tools["profile"] = toolsProfile;
+        tools["alsoAllow"] = new JsonArray("web_search");
+
+        var web = EnsureObject(tools, "web");
+        var search = EnsureObject(web, "search");
+        search["provider"] = "ollama";
+
+        var aiHelper = EnsureObject(root, "aihelper");
+        aiHelper["lastAppliedOpenClawMode"] = modeName;
+        aiHelper["lastUpdatedAtUtc"] = DateTime.UtcNow.ToString("O");
+
+        SaveOpenClawConfigRoot(root);
+
+        return new OpenClawConfigApplyResult
+        {
+            ModeName = modeName,
+            ConfigPath = OpenClawConfigFilePath,
+            BackupPath = backupPath,
+            PrimaryModel = BuildOllamaPrimaryModel(primaryModelTag),
+            ToolsProfile = toolsProfile
+        };
+    }
+
     private static void EnsureManagedCreativeToolPackage(string packageId)
     {
         if (!ManagedCreativeToolPackages.Contains(packageId))
@@ -730,6 +884,32 @@ Write-Host '1. Return to AIHelper and refresh the Local AI status.' -ForegroundC
 Write-Host '2. If old terminals still cannot see ollama, open a new terminal window.' -ForegroundColor Yellow
 Write-Host '3. A large main window is not required. Use AIHelper to start the local server if needed.' -ForegroundColor Yellow
 Write-Host '4. Download your first local model before connecting Ollama to OpenClaw.' -ForegroundColor Yellow
+""";
+    }
+
+    private static string BuildOpenClawCommandScript(
+        string openClawPath,
+        string title,
+        IReadOnlyList<string> arguments)
+    {
+        var escapedPath = EscapeForSingleQuotedPowerShell(openClawPath);
+        var escapedTitle = EscapeForSingleQuotedPowerShell(title);
+        var argumentLiteral = string.Join(
+            ", ",
+            arguments.Select(argument => $"'{EscapeForSingleQuotedPowerShell(argument)}'"));
+
+        return $$"""
+$ErrorActionPreference = 'Stop'
+
+$openClaw = '{{escapedPath}}'
+$arguments = @({{argumentLiteral}})
+
+Write-Host ''
+Write-Host '== {{escapedTitle}} ==' -ForegroundColor Cyan
+& $openClaw @arguments
+
+Write-Host ''
+Write-Host 'The terminal remains open for inspection.' -ForegroundColor Green
 """;
     }
 
@@ -1163,7 +1343,7 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return new WingetPackageInfo(true, detail);
     }
 
-    private static CommandResult RunCommand(string fileName, string arguments)
+    private static CommandResult RunCommand(string fileName, string arguments, int timeoutMilliseconds = 15000)
     {
         try
         {
@@ -1181,7 +1361,7 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
             process.Start();
             var standardOutput = process.StandardOutput.ReadToEnd();
             var standardError = process.StandardError.ReadToEnd();
-            process.WaitForExit(15000);
+            process.WaitForExit(timeoutMilliseconds);
 
             if (!process.HasExited)
             {
@@ -1264,6 +1444,298 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return FindExistingPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "openclaw.cmd"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "openclaw.cmd"));
+    }
+
+    private JsonObject LoadOpenClawConfigRoot()
+    {
+        if (!File.Exists(OpenClawConfigFilePath))
+        {
+            return new JsonObject();
+        }
+
+        var parsed = JsonNode.Parse(File.ReadAllText(OpenClawConfigFilePath)) as JsonObject;
+        return parsed ?? new JsonObject();
+    }
+
+    private void SaveOpenClawConfigRoot(JsonObject root)
+    {
+        var json = root.ToJsonString(
+            new JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        File.WriteAllText(OpenClawConfigFilePath, json, Encoding.UTF8);
+    }
+
+    private string BackupOpenClawConfig()
+    {
+        var backupDirectory = Path.Combine(OpenClawHomeFolder, "aihelper-backups");
+        Directory.CreateDirectory(backupDirectory);
+
+        var backupPath = Path.Combine(
+            backupDirectory,
+            $"openclaw-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+
+        File.Copy(OpenClawConfigFilePath, backupPath, overwrite: true);
+        return backupPath;
+    }
+
+    private string ResolvePreferredOllamaModel(IReadOnlyList<string> preferredTags, string fallbackTag)
+    {
+        var installedModels = GetInstalledOllamaModels(ResolveOllamaExecutablePath());
+
+        foreach (var preferredTag in preferredTags)
+        {
+            var exactMatch = installedModels.Keys.FirstOrDefault(model =>
+                model.Equals(preferredTag, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(exactMatch))
+            {
+                return exactMatch;
+            }
+
+            var partialMatch = installedModels.Keys.FirstOrDefault(model =>
+                model.Contains(preferredTag, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(partialMatch))
+            {
+                return partialMatch;
+            }
+        }
+
+        return fallbackTag;
+    }
+
+    private static string BuildOllamaPrimaryModel(string modelTag)
+    {
+        return modelTag.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase)
+            ? modelTag
+            : $"ollama/{modelTag}";
+    }
+
+    private static JsonObject EnsureObject(JsonObject root, string propertyName)
+    {
+        if (root[propertyName] is JsonObject objectNode)
+        {
+            return objectNode;
+        }
+
+        objectNode = new JsonObject();
+        root[propertyName] = objectNode;
+        return objectNode;
+    }
+
+    private static OpenClawConfigDetails ReadOpenClawConfig(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return new OpenClawConfigDetails
+            {
+                Exists = false,
+                Path = path
+            };
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            var root = document.RootElement;
+
+            var primaryModel = GetJsonString(root, "agents", "defaults", "model", "primary");
+            var toolProfile = GetJsonString(root, "tools", "profile");
+            var webSearchProvider = GetJsonString(root, "tools", "web", "search", "provider");
+            var alsoAllow = GetJsonArrayValues(root, "tools", "alsoAllow");
+            var telegramAllowFrom = GetJsonArrayValues(root, "channels", "telegram", "allowFrom");
+            var telegramDmPolicy = GetJsonString(root, "channels", "telegram", "dmPolicy");
+            var telegramBotToken = GetJsonString(root, "channels", "telegram", "botToken");
+
+            return new OpenClawConfigDetails
+            {
+                Exists = true,
+                Path = path,
+                PrimaryModel = primaryModel,
+                ToolProfile = toolProfile,
+                WebSearchEnabled =
+                    alsoAllow.Contains("web_search", StringComparer.OrdinalIgnoreCase) ||
+                    !string.IsNullOrWhiteSpace(webSearchProvider),
+                TelegramConfigured =
+                    telegramAllowFrom.Count > 0 ||
+                    !string.IsNullOrWhiteSpace(telegramBotToken) ||
+                    telegramDmPolicy.Equals("allowlist", StringComparison.OrdinalIgnoreCase)
+            };
+        }
+        catch (Exception exception)
+        {
+            return new OpenClawConfigDetails
+            {
+                Exists = true,
+                Path = path,
+                ParseError = exception.Message
+            };
+        }
+    }
+
+    private static string GetJsonString(JsonElement root, params string[] path)
+    {
+        if (!TryGetJsonValue(root, out var value, path))
+        {
+            return string.Empty;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString()?.Trim() ?? string.Empty,
+            JsonValueKind.Number => value.ToString(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => string.Empty
+        };
+    }
+
+    private static IReadOnlyList<string> GetJsonArrayValues(JsonElement root, params string[] path)
+    {
+        if (!TryGetJsonValue(root, out var value, path) || value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var result = new List<string>();
+
+        foreach (var item in value.EnumerateArray())
+        {
+            switch (item.ValueKind)
+            {
+                case JsonValueKind.String:
+                    var stringValue = item.GetString()?.Trim();
+
+                    if (!string.IsNullOrWhiteSpace(stringValue))
+                    {
+                        result.Add(stringValue);
+                    }
+
+                    break;
+                case JsonValueKind.Number:
+                    result.Add(item.ToString());
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private static bool TryGetJsonValue(JsonElement root, out JsonElement value, params string[] path)
+    {
+        value = root;
+
+        foreach (var segment in path)
+        {
+            if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(segment, out value))
+            {
+                value = default;
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool DetermineOpenClawNodeInstalled(CommandResult nodeStatus)
+    {
+        if (nodeStatus == CommandResult.Missing)
+        {
+            return false;
+        }
+
+        return !ContainsAny(
+            nodeStatus.Output,
+            "scheduled task (missing)",
+            "service missing",
+            "not installed",
+            "cannot find the file specified",
+            "timed out");
+    }
+
+    private static bool DetermineOpenClawBrowserReady(CommandResult browserStatus)
+    {
+        if (browserStatus == CommandResult.Missing)
+        {
+            return false;
+        }
+
+        return browserStatus.Success &&
+               !ContainsAny(
+                   browserStatus.Output,
+                   "pairing required",
+                   "not installed",
+                   "timed out",
+                   "missing",
+                   "error");
+    }
+
+    private static string BuildOpenClawDetail(
+        CommandResult openClawVersion,
+        string openClawPath,
+        OpenClawConfigDetails config)
+    {
+        var lines = new List<string>();
+
+        if (openClawVersion.Success &&
+            !string.IsNullOrWhiteSpace(openClawVersion.Output) &&
+            !string.Equals(openClawVersion.Output, "-", StringComparison.Ordinal))
+        {
+            lines.Add(openClawVersion.Output);
+        }
+
+        lines.Add(openClawPath);
+        lines.Add(config.Exists
+            ? $"Config: {config.Path}"
+            : $"Config not created yet: {config.Path}");
+
+        if (!string.IsNullOrWhiteSpace(config.ParseError))
+        {
+            lines.Add($"Config parse warning: {config.ParseError}");
+            return string.Join(Environment.NewLine, lines);
+        }
+
+        if (!string.IsNullOrWhiteSpace(config.PrimaryModel))
+        {
+            lines.Add($"Primary model: {config.PrimaryModel}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(config.ToolProfile))
+        {
+            lines.Add($"Tools profile: {config.ToolProfile}");
+        }
+
+        lines.Add(config.WebSearchEnabled ? "Web search is configured." : "Web search is not configured.");
+        lines.Add(config.TelegramConfigured ? "Telegram channel is configured." : "Telegram channel is not configured.");
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string BuildOpenClawNodeDetail(CommandResult nodeStatus)
+    {
+        if (nodeStatus == CommandResult.Missing)
+        {
+            return "OpenClaw is not installed yet.";
+        }
+
+        return string.IsNullOrWhiteSpace(nodeStatus.Output)
+            ? "No node status output."
+            : nodeStatus.Output;
+    }
+
+    private static string BuildOpenClawBrowserDetail(CommandResult browserStatus)
+    {
+        if (browserStatus == CommandResult.Missing)
+        {
+            return "OpenClaw browser tools are unavailable because OpenClaw is not installed yet.";
+        }
+
+        return string.IsNullOrWhiteSpace(browserStatus.Output)
+            ? "No browser status output."
+            : browserStatus.Output;
     }
 
     private static string BuildOllamaDetail(
@@ -1364,6 +1836,18 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return false;
     }
 
+    private static bool ContainsAny(string text, params string[] fragments)
+    {
+        return fragments.Any(fragment =>
+            !string.IsNullOrWhiteSpace(fragment) &&
+            text.Contains(fragment, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string EscapeForSingleQuotedPowerShell(string value)
+    {
+        return value.Replace("'", "''");
+    }
+
     private static string? ResolveExecutableOnPath(params string[] commandNames)
     {
         foreach (var commandName in commandNames)
@@ -1386,6 +1870,17 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         }
 
         return null;
+    }
+
+    private sealed class OpenClawConfigDetails
+    {
+        public required bool Exists { get; init; }
+        public required string Path { get; init; }
+        public string PrimaryModel { get; init; } = string.Empty;
+        public string ToolProfile { get; init; } = string.Empty;
+        public bool WebSearchEnabled { get; init; }
+        public bool TelegramConfigured { get; init; }
+        public string ParseError { get; init; } = string.Empty;
     }
 
     private static string? FindExistingPath(params string[] paths)

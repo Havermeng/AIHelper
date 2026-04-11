@@ -104,6 +104,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RefreshLocalAiModelOptions();
         RefreshCreativeAiToolOptions();
         RefreshAiAgentToolOptions();
+        RefreshOpenClawSetupModes();
+        RefreshOpenClawCapabilityChecks();
         LoadNewSessionConfigurationInfoSafe();
         ApplyDangerousAccessDefaultsToNewSession();
         LoadDnsPresetsSafe();
@@ -148,6 +150,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<CreativeAiToolOption> CreativeAiToolOptions { get; } = [];
 
     public ObservableCollection<CreativeAiToolOption> AiAgentToolOptions { get; } = [];
+
+    public ObservableCollection<SetupCheckItem> OpenClawSetupModes { get; } = [];
+
+    public ObservableCollection<SetupCheckItem> OpenClawCapabilityChecks { get; } = [];
 
     public ObservableCollection<LaunchOption> SandboxModeOptions { get; } = [];
 
@@ -415,6 +421,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanManageAiAgents => !IsSetupBusy;
 
+    public bool CanApplyOpenClawModes =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenClawAvailable == true;
+
+    public bool CanInspectOpenClawStatus =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenClawAvailable == true;
+
+    public bool CanInstallOpenClawNode =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenClawAvailable == true;
+
+    public bool CanInspectOpenClawNode =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenClawAvailable == true;
+
+    public bool CanInspectOpenClawBrowser =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenClawAvailable == true;
+
+    public bool CanOpenOpenClawConfig =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot is not null &&
+        (File.Exists(_lastEnvironmentSnapshot.OpenClawConfigPath) ||
+         Directory.Exists(Path.GetDirectoryName(_lastEnvironmentSnapshot.OpenClawConfigPath) ?? string.Empty));
+
+    public string OpenClawDetectedConfigText => BuildOpenClawDetectedConfigText(_lastEnvironmentSnapshot);
+
+    public string OpenClawRecommendationText => BuildOpenClawRecommendationText(_lastEnvironmentSnapshot);
+
     public bool CanUninstallOllama =>
         !IsSetupBusy &&
         (_lastEnvironmentSnapshot?.OllamaAvailable == true ||
@@ -556,6 +592,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanInstallStarterOllamaModel));
                 OnPropertyChanged(nameof(CanManageCreativeAiTools));
                 OnPropertyChanged(nameof(CanManageAiAgents));
+                OnPropertyChanged(nameof(CanApplyOpenClawModes));
+                OnPropertyChanged(nameof(CanInspectOpenClawStatus));
+                OnPropertyChanged(nameof(CanInstallOpenClawNode));
+                OnPropertyChanged(nameof(CanInspectOpenClawNode));
+                OnPropertyChanged(nameof(CanInspectOpenClawBrowser));
+                OnPropertyChanged(nameof(CanOpenOpenClawConfig));
                 OnPropertyChanged(nameof(CanUninstallOllama));
                 OnPropertyChanged(nameof(CanUninstallLmStudio));
             }
@@ -570,7 +612,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _isSetupCoreSectionExpanded, value))
             {
                 OnPropertyChanged(nameof(SetupCoreSectionContentVisibility));
-                OnPropertyChanged(nameof(SetupCoreSectionToggleGlyph));
+                OnPropertyChanged(nameof(SetupCoreSectionCollapsedIndicatorVisibility));
             }
         }
     }
@@ -583,7 +625,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _isSetupCodexSectionExpanded, value))
             {
                 OnPropertyChanged(nameof(SetupCodexSectionContentVisibility));
-                OnPropertyChanged(nameof(SetupCodexSectionToggleGlyph));
+                OnPropertyChanged(nameof(SetupCodexSectionCollapsedIndicatorVisibility));
             }
         }
     }
@@ -596,7 +638,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _isSetupLocalAiSectionExpanded, value))
             {
                 OnPropertyChanged(nameof(SetupLocalAiSectionContentVisibility));
-                OnPropertyChanged(nameof(SetupLocalAiSectionToggleGlyph));
+                OnPropertyChanged(nameof(SetupLocalAiSectionCollapsedIndicatorVisibility));
             }
         }
     }
@@ -609,7 +651,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _isSetupDnsSectionExpanded, value))
             {
                 OnPropertyChanged(nameof(SetupDnsSectionContentVisibility));
-                OnPropertyChanged(nameof(SetupDnsSectionToggleGlyph));
+                OnPropertyChanged(nameof(SetupDnsSectionCollapsedIndicatorVisibility));
             }
         }
     }
@@ -626,13 +668,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public Visibility SetupDnsSectionContentVisibility =>
         IsSetupDnsSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
 
-    public string SetupCoreSectionToggleGlyph => IsSetupCoreSectionExpanded ? "в€’" : "+";
+    public Visibility SetupCoreSectionCollapsedIndicatorVisibility =>
+        IsSetupCoreSectionExpanded ? Visibility.Collapsed : Visibility.Visible;
 
-    public string SetupCodexSectionToggleGlyph => IsSetupCodexSectionExpanded ? "в€’" : "+";
+    public Visibility SetupCodexSectionCollapsedIndicatorVisibility =>
+        IsSetupCodexSectionExpanded ? Visibility.Collapsed : Visibility.Visible;
 
-    public string SetupLocalAiSectionToggleGlyph => IsSetupLocalAiSectionExpanded ? "в€’" : "+";
+    public Visibility SetupLocalAiSectionCollapsedIndicatorVisibility =>
+        IsSetupLocalAiSectionExpanded ? Visibility.Collapsed : Visibility.Visible;
 
-    public string SetupDnsSectionToggleGlyph => IsSetupDnsSectionExpanded ? "в€’" : "+";
+    public Visibility SetupDnsSectionCollapsedIndicatorVisibility =>
+        IsSetupDnsSectionExpanded ? Visibility.Collapsed : Visibility.Visible;
 
     public bool IsUpdateBusy
     {
@@ -2073,6 +2119,207 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void OpenClawStatusButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOpenClawStatusTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawStatusStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallOpenClawNodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOpenClawNodeInstallTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawNodeInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void OpenClawNodeStatusButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOpenClawNodeStatusTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawNodeStatusStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void OpenClawBrowserStatusButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOpenClawBrowserStatusTerminal();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawBrowserStatusStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void OpenClawConfigButton_Click(object sender, RoutedEventArgs e)
+    {
+        var configPath = _lastEnvironmentSnapshot?.OpenClawConfigPath ?? _environmentService.OpenClawConfigFilePath;
+        var configDirectory = Path.GetDirectoryName(configPath);
+
+        if (File.Exists(configPath))
+        {
+            OpenExplorerSelect(configPath);
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawConfigOpened"]);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(configDirectory) && Directory.Exists(configDirectory))
+        {
+            CodexEnvironmentService.OpenFolder(configDirectory);
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawConfigOpened"]);
+            return;
+        }
+
+        SetSetupStatus("#FFD6D6", Strings.Format("StatusFolderNotFound", configPath));
+    }
+
+    private async void ApplyOpenClawQuickModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ApplyOpenClawModeAsync(
+            () => _environmentService.ApplyOpenClawQuickStartMode(),
+            "SetupStatusOpenClawQuickModeApplied");
+    }
+
+    private async void ApplyOpenClawAdvancedModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ApplyOpenClawModeAsync(
+            () => _environmentService.ApplyOpenClawAdvancedMode(),
+            "SetupStatusOpenClawAdvancedModeApplied");
+    }
+
+    private async void PrepareOpenClawAlmostFullModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(
+                Strings["SetupOpenClawAlmostFullWarningMessage"],
+                Strings["SetupOpenClawAlmostFullWarningTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await ApplyOpenClawModeAsync(
+            () => _environmentService.PrepareOpenClawAlmostFullMode(),
+            "SetupStatusOpenClawAlmostFullModeApplied");
+    }
+
+    private async Task ApplyOpenClawModeAsync(
+        Func<OpenClawConfigApplyResult> applyMode,
+        string successStatusKey)
+    {
+        try
+        {
+            var result = await Task.Run(applyMode);
+            await RefreshSetupSectionAsync(preserveDnsStatus: true);
+
+            if (string.IsNullOrWhiteSpace(result.BackupPath))
+            {
+                SetSetupStatus(
+                    "#F8E7D6",
+                    Strings.Format(successStatusKey, result.PrimaryModel, result.ToolsProfile));
+            }
+            else
+            {
+                SetSetupStatus(
+                    "#F8E7D6",
+                    Strings.Format(
+                        "SetupStatusOpenClawModeAppliedWithBackup",
+                        result.PrimaryModel,
+                        result.ToolsProfile,
+                        result.BackupPath));
+            }
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void ApplyBeginnerCloudPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyBeginnerCloudPreset();
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionPresetCloudApplied"]);
+    }
+
+    private void ApplyBeginnerLocalPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyBeginnerLocalPreset();
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionPresetLocalApplied"]);
+    }
+
+    private void ApplyBeginnerAutoPresetButton_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyBeginnerAutoPreset();
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionPresetAutoApplied"]);
+    }
+
+    private void ApplyBeginnerCloudPreset()
+    {
+        NewSessionUseFullAuto = false;
+        NewSessionUseOss = false;
+        NewSessionUseSearch = false;
+        SelectedLocalProvider = string.Empty;
+        SelectedSandboxMode = SettingsDangerousFullAccess ? "danger-full-access" : "workspace-write";
+        SelectedApprovalPolicy = SettingsDangerousFullAccess ? "never" : "on-request";
+
+        if (NewSessionModel.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+        {
+            NewSessionModel = _configuredCodexModel;
+        }
+
+        if (!ProfileSuggestions.Contains(NewSessionProfile))
+        {
+            NewSessionProfile = string.Empty;
+        }
+    }
+
+    private void ApplyBeginnerLocalPreset()
+    {
+        NewSessionUseFullAuto = false;
+        NewSessionUseOss = true;
+        NewSessionUseSearch = false;
+        SelectedLocalProvider = "ollama";
+        SelectedSandboxMode = "workspace-write";
+        SelectedApprovalPolicy = "on-request";
+
+        if (string.IsNullOrWhiteSpace(NewSessionModel) ||
+            !NewSessionModel.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase))
+        {
+            NewSessionModel = string.Empty;
+        }
+
+        NewSessionProfile = string.Empty;
+    }
+
+    private void ApplyBeginnerAutoPreset()
+    {
+        NewSessionUseOss = false;
+        NewSessionUseSearch = false;
+        SelectedLocalProvider = string.Empty;
+        NewSessionUseFullAuto = true;
+        NewSessionProfile = string.Empty;
+    }
+
     private void LaunchCodexLoginButton_Click(object sender, RoutedEventArgs e)
     {
         if (!File.Exists(_environmentService.CodexCommandPath))
@@ -2233,11 +2480,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(OllamaQuickGuidanceText));
         OnPropertyChanged(nameof(CanManageCreativeAiTools));
         OnPropertyChanged(nameof(CanManageAiAgents));
+        OnPropertyChanged(nameof(CanApplyOpenClawModes));
+        OnPropertyChanged(nameof(CanInspectOpenClawStatus));
+        OnPropertyChanged(nameof(CanInstallOpenClawNode));
+        OnPropertyChanged(nameof(CanInspectOpenClawNode));
+        OnPropertyChanged(nameof(CanInspectOpenClawBrowser));
+        OnPropertyChanged(nameof(CanOpenOpenClawConfig));
+        OnPropertyChanged(nameof(OpenClawDetectedConfigText));
+        OnPropertyChanged(nameof(OpenClawRecommendationText));
 
         RefreshLaunchOptionCollections();
         RefreshLocalAiModelOptions();
         RefreshCreativeAiToolOptions(_lastEnvironmentSnapshot);
         RefreshAiAgentToolOptions(_lastEnvironmentSnapshot);
+        RefreshOpenClawSetupModes(_lastEnvironmentSnapshot);
+        RefreshOpenClawCapabilityChecks(_lastEnvironmentSnapshot);
         LoadDnsPresets(SelectedDnsPreset);
         RefreshLocalizedChromeText();
         RefreshSectionChromeText();
@@ -2561,9 +2818,263 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     : Strings["SetupLocalAiNotInstalled"],
                 InstalledStatusBrush = openClawInstalled ? "#1F7A52" : "#5E6C76",
                 InstalledDetailText = openClawInstalled
-                    ? environment?.OpenClawDetail ?? "openclaw"
+                    ? BuildOpenClawAgentDetailText(environment)
                     : Strings["SetupAiAgentMissingDetail"]
             });
+    }
+
+    private string BuildOpenClawAgentDetailText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return "OpenClaw";
+        }
+
+        var lines = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(snapshot.OpenClawPrimaryModel))
+        {
+            lines.Add(Strings.Format("SetupOpenClawDetectedModelLine", snapshot.OpenClawPrimaryModel));
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.OpenClawToolProfile))
+        {
+            lines.Add(Strings.Format("SetupOpenClawDetectedProfileLine", snapshot.OpenClawToolProfile));
+        }
+
+        lines.Add(snapshot.OpenClawNodeInstalled
+            ? Strings["SetupOpenClawNodeReadyShort"]
+            : Strings["SetupOpenClawNodeMissingShort"]);
+        lines.Add(snapshot.OpenClawBrowserReady
+            ? Strings["SetupOpenClawBrowserReadyShort"]
+            : Strings["SetupOpenClawBrowserNeedsWorkShort"]);
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private void RefreshOpenClawSetupModes(CodexEnvironmentSnapshot? snapshot = null)
+    {
+        var environment = snapshot ?? _lastEnvironmentSnapshot;
+        OpenClawSetupModes.Clear();
+
+        var quickIsCurrent =
+            environment?.OpenClawAvailable == true &&
+            (string.IsNullOrWhiteSpace(environment.OpenClawToolProfile) ||
+             environment.OpenClawToolProfile.Equals("minimal", StringComparison.OrdinalIgnoreCase));
+        var advancedModelReady = HasStrongOpenClawModel(environment);
+        var advancedIsCurrent =
+            environment?.OpenClawAvailable == true &&
+            environment.OpenClawToolProfile.Equals("coding", StringComparison.OrdinalIgnoreCase) &&
+            advancedModelReady;
+        var fullAssistantReady =
+            environment?.OpenClawNodeInstalled == true &&
+            environment.OpenClawBrowserReady;
+
+        OpenClawSetupModes.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawModeQuickTitle"],
+                quickIsCurrent
+                    ? Strings["SetupOpenClawModeStatusCurrent"]
+                    : Strings["SetupOpenClawModeStatusStable"],
+                Strings["SetupOpenClawModeQuickDescription"],
+                quickIsCurrent,
+                isWarning: environment?.OpenClawAvailable == true && !quickIsCurrent));
+        OpenClawSetupModes.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawModeAdvancedTitle"],
+                advancedIsCurrent
+                    ? Strings["SetupOpenClawModeStatusCurrent"]
+                    : advancedModelReady
+                        ? Strings["SetupOpenClawModeStatusRecommended"]
+                        : Strings["SetupOpenClawModeStatusNeedsModel"],
+                advancedModelReady
+                    ? Strings["SetupOpenClawModeAdvancedDescription"]
+                    : Strings["SetupOpenClawModeAdvancedNeedsModelDescription"],
+                advancedIsCurrent,
+                isWarning: !advancedIsCurrent && advancedModelReady));
+        OpenClawSetupModes.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawModeFullTitle"],
+                fullAssistantReady
+                    ? Strings["SetupOpenClawModeStatusReady"]
+                    : Strings["SetupOpenClawModeStatusRequiresSetup"],
+                fullAssistantReady
+                    ? Strings["SetupOpenClawModeFullDescription"]
+                    : Strings["SetupOpenClawModeFullNeedsSetupDescription"],
+                fullAssistantReady,
+                isWarning: !fullAssistantReady));
+    }
+
+    private void RefreshOpenClawCapabilityChecks(CodexEnvironmentSnapshot? snapshot = null)
+    {
+        var environment = snapshot ?? _lastEnvironmentSnapshot;
+        OpenClawCapabilityChecks.Clear();
+
+        if (environment is null)
+        {
+            return;
+        }
+
+        var localChatReady = environment.OpenClawAvailable &&
+                             environment.OpenClawConfigExists &&
+                             !string.IsNullOrWhiteSpace(environment.OpenClawPrimaryModel) &&
+                             (!environment.OpenClawPrimaryModel.StartsWith("ollama/", StringComparison.OrdinalIgnoreCase) ||
+                              environment.OllamaAvailable);
+
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityLocalChat"],
+                localChatReady ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                localChatReady
+                    ? Strings.Format("SetupOpenClawCapabilityLocalChatReadyDetail", environment.OpenClawPrimaryModel)
+                    : Strings["SetupOpenClawCapabilityLocalChatMissingDetail"],
+                localChatReady,
+                isWarning: environment.OpenClawAvailable && !localChatReady));
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityWebSearch"],
+                environment.OpenClawWebSearchEnabled ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                environment.OpenClawWebSearchEnabled
+                    ? Strings["SetupOpenClawCapabilityWebSearchReadyDetail"]
+                    : Strings["SetupOpenClawCapabilityWebSearchMissingDetail"],
+                environment.OpenClawWebSearchEnabled,
+                isWarning: environment.OpenClawAvailable && !environment.OpenClawWebSearchEnabled));
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityBrowser"],
+                environment.OpenClawBrowserReady ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                environment.OpenClawBrowserReady
+                    ? Strings["SetupOpenClawCapabilityBrowserReadyDetail"]
+                    : Strings.Format("SetupOpenClawCapabilityBrowserMissingDetail", environment.OpenClawBrowserDetail),
+                environment.OpenClawBrowserReady,
+                isWarning: environment.OpenClawBrowserCliAvailable && !environment.OpenClawBrowserReady));
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityDesktopScreenshot"],
+                Strings["SetupBadgeMissing"],
+                Strings["SetupOpenClawCapabilityDesktopScreenshotDetail"],
+                false,
+                isWarning: environment.OpenClawBrowserReady));
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityGuiAutomation"],
+                Strings["SetupBadgeMissing"],
+                Strings["SetupOpenClawCapabilityGuiAutomationDetail"],
+                false,
+                isWarning: environment.OpenClawNodeInstalled || environment.OpenClawBrowserReady));
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityTelegram"],
+                environment.OpenClawTelegramConfigured ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                environment.OpenClawTelegramConfigured
+                    ? Strings["SetupOpenClawCapabilityTelegramReadyDetail"]
+                    : Strings["SetupOpenClawCapabilityTelegramMissingDetail"],
+                environment.OpenClawTelegramConfigured,
+                isWarning: environment.OpenClawAvailable && !environment.OpenClawTelegramConfigured));
+        OpenClawCapabilityChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOpenClawCapabilityAdmin"],
+                Strings["SetupBadgeMissing"],
+                Strings["SetupOpenClawCapabilityAdminDetail"],
+                false,
+                isWarning: environment.OpenClawAvailable));
+    }
+
+    private string BuildOpenClawDetectedConfigText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupOpenClawDetectedConfigNotChecked"];
+        }
+
+        var model = string.IsNullOrWhiteSpace(snapshot.OpenClawPrimaryModel)
+            ? Strings["SetupOpenClawValueNotSet"]
+            : snapshot.OpenClawPrimaryModel;
+        var profile = string.IsNullOrWhiteSpace(snapshot.OpenClawToolProfile)
+            ? Strings["SetupOpenClawValueNotSet"]
+            : snapshot.OpenClawToolProfile;
+        var configPath = string.IsNullOrWhiteSpace(snapshot.OpenClawConfigPath)
+            ? _environmentService.OpenClawConfigFilePath
+            : snapshot.OpenClawConfigPath;
+
+        return Strings.Format(
+            "SetupOpenClawDetectedConfigFormat",
+            configPath,
+            model,
+            profile,
+            snapshot.OpenClawWebSearchEnabled ? Strings["Yes"] : Strings["No"],
+            snapshot.OpenClawTelegramConfigured ? Strings["Yes"] : Strings["No"]);
+    }
+
+    private string BuildOpenClawRecommendationText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupOpenClawRecommendationNoData"];
+        }
+
+        if (!snapshot.OpenClawAvailable)
+        {
+            return Strings["SetupOpenClawRecommendationInstallFirst"];
+        }
+
+        if (!snapshot.OpenClawConfigExists)
+        {
+            return Strings["SetupOpenClawRecommendationCreateConfig"];
+        }
+
+        if (IsLightweightOpenClawModel(snapshot.OpenClawPrimaryModel) &&
+            !snapshot.OpenClawToolProfile.Equals("minimal", StringComparison.OrdinalIgnoreCase))
+        {
+            return Strings["SetupOpenClawRecommendationDowngradeTools"];
+        }
+
+        if (IsLightweightOpenClawModel(snapshot.OpenClawPrimaryModel))
+        {
+            return Strings["SetupOpenClawRecommendationSmallModel"];
+        }
+
+        if (HasStrongOpenClawModel(snapshot) &&
+            !snapshot.OpenClawPrimaryModel.Contains("qwen3.5", StringComparison.OrdinalIgnoreCase))
+        {
+            return Strings["SetupOpenClawRecommendationUpgradePrimaryModel"];
+        }
+
+        if (!snapshot.OpenClawNodeInstalled)
+        {
+            return Strings["SetupOpenClawRecommendationInstallNode"];
+        }
+
+        if (!snapshot.OpenClawBrowserReady)
+        {
+            return Strings["SetupOpenClawRecommendationFixBrowser"];
+        }
+
+        return Strings["SetupOpenClawRecommendationAdvancedReady"];
+    }
+
+    private static bool HasStrongOpenClawModel(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return false;
+        }
+
+        return snapshot.OpenClawPrimaryModel.Contains("qwen3.5", StringComparison.OrdinalIgnoreCase) ||
+               snapshot.InstalledOllamaModels.Keys.Any(model =>
+                   model.Contains("qwen3.5", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsLightweightOpenClawModel(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+        {
+            return false;
+        }
+
+        return modelName.Contains("qwen2.5:3b", StringComparison.OrdinalIgnoreCase) ||
+               modelName.Contains("3b", StringComparison.OrdinalIgnoreCase) ||
+               modelName.Contains("mini", StringComparison.OrdinalIgnoreCase);
     }
 
     private void LoadNewSessionConfigurationInfo()
@@ -3164,6 +3675,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(CanInstallLocalAiModels));
             OnPropertyChanged(nameof(CanManageCreativeAiTools));
             OnPropertyChanged(nameof(CanManageAiAgents));
+            OnPropertyChanged(nameof(CanApplyOpenClawModes));
+            OnPropertyChanged(nameof(CanInspectOpenClawStatus));
+            OnPropertyChanged(nameof(CanInstallOpenClawNode));
+            OnPropertyChanged(nameof(CanInspectOpenClawNode));
+            OnPropertyChanged(nameof(CanInspectOpenClawBrowser));
+            OnPropertyChanged(nameof(CanOpenOpenClawConfig));
         }
     }
 
@@ -3225,6 +3742,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RefreshLocalAiModelOptions(snapshot.InstalledOllamaModels);
         RefreshCreativeAiToolOptions(snapshot);
         RefreshAiAgentToolOptions(snapshot);
+        RefreshOpenClawSetupModes(snapshot);
+        RefreshOpenClawCapabilityChecks(snapshot);
         RefreshOllamaQuickChecks(snapshot);
         SetupCoreChecks.Clear();
         SetupCodexChecks.Clear();
@@ -3284,6 +3803,29 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.OpenClawAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.OpenClawAvailable ? snapshot.OpenClawDetail : Strings["SetupDetailOpenClawMissing"],
                 snapshot.OpenClawAvailable));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOpenClawNode"],
+                snapshot.OpenClawNodeInstalled ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                snapshot.OpenClawNodeDetail,
+                snapshot.OpenClawNodeInstalled,
+                isWarning: snapshot.OpenClawAvailable && !snapshot.OpenClawNodeInstalled));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOpenClawBrowser"],
+                snapshot.OpenClawBrowserReady ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                snapshot.OpenClawBrowserDetail,
+                snapshot.OpenClawBrowserReady,
+                isWarning: snapshot.OpenClawBrowserCliAvailable && !snapshot.OpenClawBrowserReady));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOpenClawTelegram"],
+                snapshot.OpenClawTelegramConfigured ? Strings["SetupBadgeReady"] : Strings["SetupBadgeMissing"],
+                snapshot.OpenClawTelegramConfigured
+                    ? Strings["SetupOpenClawCapabilityTelegramReadyDetail"]
+                    : Strings["SetupOpenClawCapabilityTelegramMissingDetail"],
+                snapshot.OpenClawTelegramConfigured,
+                isWarning: snapshot.OpenClawAvailable && !snapshot.OpenClawTelegramConfigured));
         SetupCodexChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckLogin"],
@@ -3308,6 +3850,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(OllamaQuickGuidanceText));
         OnPropertyChanged(nameof(CanManageCreativeAiTools));
         OnPropertyChanged(nameof(CanManageAiAgents));
+        OnPropertyChanged(nameof(CanApplyOpenClawModes));
+        OnPropertyChanged(nameof(CanInspectOpenClawStatus));
+        OnPropertyChanged(nameof(CanInstallOpenClawNode));
+        OnPropertyChanged(nameof(CanInspectOpenClawNode));
+        OnPropertyChanged(nameof(CanInspectOpenClawBrowser));
+        OnPropertyChanged(nameof(CanOpenOpenClawConfig));
+        OnPropertyChanged(nameof(OpenClawDetectedConfigText));
+        OnPropertyChanged(nameof(OpenClawRecommendationText));
         OnPropertyChanged(nameof(CanUninstallOllama));
         OnPropertyChanged(nameof(CanUninstallLmStudio));
     }
@@ -3446,6 +3996,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
+
 
 
 

@@ -34,5 +34,16 @@ public sealed class CodexEnvironmentSnapshot
     public required string PinokioDetail { get; init; }
     public required bool OpenClawAvailable { get; init; }
     public required string OpenClawDetail { get; init; }
+    public required bool OpenClawConfigExists { get; init; }
+    public required string OpenClawConfigPath { get; init; }
+    public required string OpenClawPrimaryModel { get; init; }
+    public required string OpenClawToolProfile { get; init; }
+    public required bool OpenClawWebSearchEnabled { get; init; }
+    public required bool OpenClawTelegramConfigured { get; init; }
+    public required bool OpenClawNodeInstalled { get; init; }
+    public required string OpenClawNodeDetail { get; init; }
+    public required bool OpenClawBrowserCliAvailable { get; init; }
+    public required bool OpenClawBrowserReady { get; init; }
+    public required string OpenClawBrowserDetail { get; init; }
     public required IReadOnlyDictionary<string, string> InstalledOllamaModels { get; init; }
 }

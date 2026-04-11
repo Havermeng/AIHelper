@@ -175,6 +175,37 @@
             <Setter Property="Foreground" Value="#FFFDF9" />
         </Style>
 
+        <Style x:Key="SetupSectionToggleHorizontalLineStyle" TargetType="Rectangle">
+            <Setter Property="Width" Value="12" />
+            <Setter Property="Height" Value="2" />
+            <Setter Property="RadiusX" Value="1" />
+            <Setter Property="RadiusY" Value="1" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SetupSectionToggleVerticalLineStyle" TargetType="Rectangle">
+            <Setter Property="Width" Value="2" />
+            <Setter Property="Height" Value="12" />
+            <Setter Property="RadiusX" Value="1" />
+            <Setter Property="RadiusY" Value="1" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SetupSectionToggleBadgeStyle" TargetType="Border">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="CornerRadius" Value="17" />
+            <Setter Property="Background" Value="#ECDED0" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+
+        <Style x:Key="SetupSectionToggleBadgeDarkStyle" TargetType="Border" BasedOn="{StaticResource SetupSectionToggleBadgeStyle}">
+            <Setter Property="Background" Value="#355364" />
+        </Style>
+
         <Style x:Key="DnsMiniButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="MinWidth" Value="104" />
             <Setter Property="FontSize" Value="10.5" />
@@ -584,20 +615,38 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Orientation="Horizontal">
-                        <Button Style="{StaticResource SessionTabButtonStyle}"
-                                Click="SessionsTabButton_Click"
-                                Background="{Binding SessionsTabBackground}"
-                                BorderBrush="{Binding SessionsTabBackground}"
-                                Foreground="{Binding SessionsTabForeground}"
-                                Content="{Binding SessionsTabText}" />
-                        <Button Style="{StaticResource SessionTabButtonStyle}"
-                                Margin="0"
-                                Click="FavoritesTabButton_Click"
-                                Background="{Binding FavoritesTabBackground}"
-                                BorderBrush="{Binding FavoritesTabBackground}"
-                                Foreground="{Binding FavoritesTabForeground}"
-                                Content="{Binding FavoritesTabText}" />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Style="{StaticResource SessionTabButtonStyle}"
+                                    Click="SessionsTabButton_Click"
+                                    Background="{Binding SessionsTabBackground}"
+                                    BorderBrush="{Binding SessionsTabBackground}"
+                                    Foreground="{Binding SessionsTabForeground}"
+                                    Content="{Binding SessionsTabText}" />
+                            <Button Style="{StaticResource SessionTabButtonStyle}"
+                                    Margin="0"
+                                    Click="FavoritesTabButton_Click"
+                                    Background="{Binding FavoritesTabBackground}"
+                                    BorderBrush="{Binding FavoritesTabBackground}"
+                                    Foreground="{Binding FavoritesTabForeground}"
+                                    Content="{Binding FavoritesTabText}" />
+                        </StackPanel>
+
+                        <Border Margin="0,12,0,0"
+                                Padding="12"
+                                CornerRadius="16"
+                                Background="#F7F3EC">
+                            <StackPanel>
+                                <TextBlock FontSize="13"
+                                           FontWeight="SemiBold"
+                                           Foreground="#16212B"
+                                           Text="{Binding Strings[SessionsGuideTitle]}" />
+                                <TextBlock Margin="0,6,0,0"
+                                           Foreground="#475467"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding Strings[SessionsGuideText]}" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
 
                     <Grid Grid.Row="2">
@@ -1104,6 +1153,32 @@
                                     Padding="14"
                                     CornerRadius="18"
                                     Background="#203240">
+                                <StackPanel>
+                                    <TextBlock FontSize="16"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[NewSessionBeginnerTitle]}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#C3D2DC"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding Strings[NewSessionBeginnerText]}" />
+
+                                    <Button Margin="0,12,0,0"
+                                            Click="ApplyBeginnerCloudPresetButton_Click"
+                                            Content="{Binding Strings[NewSessionPresetCloudButton]}" />
+                                    <Button Margin="0,10,0,0"
+                                            Click="ApplyBeginnerLocalPresetButton_Click"
+                                            Content="{Binding Strings[NewSessionPresetLocalButton]}" />
+                                    <Button Margin="0,10,0,0"
+                                            Click="ApplyBeginnerAutoPresetButton_Click"
+                                            Content="{Binding Strings[NewSessionPresetAutoButton]}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,18,0,0"
+                                    Padding="14"
+                                    CornerRadius="18"
+                                    Background="#203240">
                                 <TextBlock Foreground="{Binding NewSessionStatusForeground}"
                                            TextWrapping="Wrap"
                                            Text="{Binding NewSessionStatusText}" />
@@ -1175,6 +1250,22 @@
                             <ScrollViewer Grid.Row="4"
                                           VerticalScrollBarVisibility="Auto">
                                 <StackPanel>
+                                    <Border Margin="0,0,0,10"
+                                            Padding="16"
+                                            CornerRadius="20"
+                                            Background="#ECDED0">
+                                        <StackPanel>
+                                            <TextBlock FontSize="16"
+                                                       FontWeight="Bold"
+                                                       Foreground="#16212B"
+                                                       Text="{Binding Strings[SetupStartHereTitle]}" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       Foreground="#475467"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SetupStartHereText]}" />
+                                        </StackPanel>
+                                    </Border>
+
                                     <Border Padding="16"
                                             CornerRadius="20"
                                             Background="#F7F3EC">
@@ -1184,9 +1275,9 @@
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="46" />
                                                     </Grid.ColumnDefinitions>
-                                                    <StackPanel>
+                                                    <StackPanel Margin="0,0,14,0">
                                                         <TextBlock FontSize="17"
                                                                    FontWeight="Bold"
                                                                    Foreground="#16212B"
@@ -1196,12 +1287,16 @@
                                                                    TextWrapping="Wrap"
                                                                    Text="{Binding Strings[SetupCoreSectionSubtitle]}" />
                                                     </StackPanel>
-                                                    <TextBlock Grid.Column="1"
-                                                               Margin="12,0,0,0"
-                                                               VerticalAlignment="Center"
-                                                               FontSize="24"
-                                                               Foreground="#16212B"
-                                                               Text="{Binding SetupCoreSectionToggleGlyph}" />
+                                                    <Border Grid.Column="1"
+                                                            Style="{StaticResource SetupSectionToggleBadgeStyle}">
+                                                        <Grid>
+                                                            <Rectangle Style="{StaticResource SetupSectionToggleHorizontalLineStyle}"
+                                                                       Fill="#16212B" />
+                                                            <Rectangle Style="{StaticResource SetupSectionToggleVerticalLineStyle}"
+                                                                       Fill="#16212B"
+                                                                       Visibility="{Binding SetupCoreSectionCollapsedIndicatorVisibility}" />
+                                                        </Grid>
+                                                    </Border>
                                                 </Grid>
                                             </Button>
 
@@ -1297,9 +1392,9 @@
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="46" />
                                                     </Grid.ColumnDefinitions>
-                                                    <StackPanel>
+                                                    <StackPanel Margin="0,0,14,0">
                                                         <TextBlock FontSize="17"
                                                                    FontWeight="Bold"
                                                                    Foreground="#16212B"
@@ -1309,12 +1404,16 @@
                                                                    TextWrapping="Wrap"
                                                                    Text="{Binding Strings[SetupCodexSectionSubtitle]}" />
                                                     </StackPanel>
-                                                    <TextBlock Grid.Column="1"
-                                                               Margin="12,0,0,0"
-                                                               VerticalAlignment="Center"
-                                                               FontSize="24"
-                                                               Foreground="#16212B"
-                                                               Text="{Binding SetupCodexSectionToggleGlyph}" />
+                                                    <Border Grid.Column="1"
+                                                            Style="{StaticResource SetupSectionToggleBadgeStyle}">
+                                                        <Grid>
+                                                            <Rectangle Style="{StaticResource SetupSectionToggleHorizontalLineStyle}"
+                                                                       Fill="#16212B" />
+                                                            <Rectangle Style="{StaticResource SetupSectionToggleVerticalLineStyle}"
+                                                                       Fill="#16212B"
+                                                                       Visibility="{Binding SetupCodexSectionCollapsedIndicatorVisibility}" />
+                                                        </Grid>
+                                                    </Border>
                                                 </Grid>
                                             </Button>
 
@@ -1390,9 +1489,9 @@
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="46" />
                                                     </Grid.ColumnDefinitions>
-                                                    <StackPanel>
+                                                    <StackPanel Margin="0,0,14,0">
                                                         <TextBlock FontSize="17"
                                                                    FontWeight="Bold"
                                                                    Foreground="#16212B"
@@ -1402,12 +1501,16 @@
                                                                    TextWrapping="Wrap"
                                                                    Text="{Binding Strings[SetupLocalAiSectionSubtitle]}" />
                                                     </StackPanel>
-                                                    <TextBlock Grid.Column="1"
-                                                               Margin="12,0,0,0"
-                                                               VerticalAlignment="Center"
-                                                               FontSize="24"
-                                                               Foreground="#16212B"
-                                                               Text="{Binding SetupLocalAiSectionToggleGlyph}" />
+                                                    <Border Grid.Column="1"
+                                                            Style="{StaticResource SetupSectionToggleBadgeStyle}">
+                                                        <Grid>
+                                                            <Rectangle Style="{StaticResource SetupSectionToggleHorizontalLineStyle}"
+                                                                       Fill="#16212B" />
+                                                            <Rectangle Style="{StaticResource SetupSectionToggleVerticalLineStyle}"
+                                                                       Fill="#16212B"
+                                                                       Visibility="{Binding SetupLocalAiSectionCollapsedIndicatorVisibility}" />
+                                                        </Grid>
+                                                    </Border>
                                                 </Grid>
                                             </Button>
 
@@ -1826,6 +1929,138 @@
                                                        Foreground="#475467"
                                                        TextWrapping="Wrap"
                                                        Text="{Binding Strings[SetupAiAgentsNote]}" />
+                                            <Border Margin="0,18,0,0"
+                                                    Padding="16"
+                                                    CornerRadius="22"
+                                                    Background="#ECDED0">
+                                                <StackPanel>
+                                                    <TextBlock FontSize="16"
+                                                               FontWeight="Bold"
+                                                               Foreground="#16212B"
+                                                               Text="{Binding Strings[SetupOpenClawModesTitle]}" />
+                                                    <TextBlock Margin="0,6,0,0"
+                                                               Foreground="#475467"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding Strings[SetupOpenClawModesSubtitle]}" />
+
+                                                    <ItemsControl Margin="0,12,0,0"
+                                                                  ItemsSource="{Binding OpenClawSetupModes}"
+                                                                  ItemTemplate="{StaticResource SetupCheckItemTemplate}" />
+
+                                                    <WrapPanel Margin="0,2,0,0"
+                                                               ItemHeight="40"
+                                                               ItemWidth="196">
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="ApplyOpenClawQuickModeButton_Click"
+                                                                IsEnabled="{Binding CanApplyOpenClawModes}"
+                                                                Content="{Binding Strings[SetupOpenClawApplyQuickButton]}" />
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="ApplyOpenClawAdvancedModeButton_Click"
+                                                                IsEnabled="{Binding CanApplyOpenClawModes}"
+                                                                Content="{Binding Strings[SetupOpenClawApplyAdvancedButton]}" />
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="PrepareOpenClawAlmostFullModeButton_Click"
+                                                                IsEnabled="{Binding CanApplyOpenClawModes}"
+                                                                Content="{Binding Strings[SetupOpenClawApplyAlmostFullButton]}" />
+                                                    </WrapPanel>
+
+                                                    <Border Padding="14"
+                                                            CornerRadius="18"
+                                                            Background="#16212B">
+                                                        <StackPanel>
+                                                            <TextBlock FontSize="13"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#FFFDF9"
+                                                                       Text="{Binding Strings[SetupOpenClawDetectedConfigTitle]}" />
+                                                            <TextBlock Margin="0,8,0,0"
+                                                                       Foreground="#C3D2DC"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding OpenClawDetectedConfigText}" />
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <Border Margin="0,12,0,0"
+                                                            Padding="14"
+                                                            CornerRadius="18"
+                                                            Background="#203543">
+                                                        <StackPanel>
+                                                            <TextBlock FontSize="13"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#FFFDF9"
+                                                                       Text="{Binding Strings[SetupOpenClawRecommendationTitle]}" />
+                                                            <TextBlock Margin="0,8,0,0"
+                                                                       Foreground="#C3D2DC"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding OpenClawRecommendationText}" />
+                                                        </StackPanel>
+                                                    </Border>
+
+                                                    <TextBlock Margin="0,18,0,0"
+                                                               FontSize="16"
+                                                               FontWeight="Bold"
+                                                               Foreground="#16212B"
+                                                               Text="{Binding Strings[SetupOpenClawCapabilitiesTitle]}" />
+                                                    <TextBlock Margin="0,6,0,0"
+                                                               Foreground="#475467"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding Strings[SetupOpenClawCapabilitiesSubtitle]}" />
+
+                                                    <ItemsControl Margin="0,12,0,0"
+                                                                  ItemsSource="{Binding OpenClawCapabilityChecks}"
+                                                                  ItemTemplate="{StaticResource SetupCheckItemTemplate}" />
+
+                                                    <TextBlock Margin="0,6,0,0"
+                                                               FontSize="13"
+                                                               FontWeight="SemiBold"
+                                                               Foreground="#16212B"
+                                                               Text="{Binding Strings[SetupOpenClawActionsTitle]}" />
+                                                    <TextBlock Margin="0,6,0,0"
+                                                               Foreground="#475467"
+                                                               TextWrapping="Wrap"
+                                                               Text="{Binding Strings[SetupOpenClawActionsSubtitle]}" />
+
+                                                    <WrapPanel Margin="0,12,0,0"
+                                                               ItemHeight="40"
+                                                               ItemWidth="196">
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="OpenClawStatusButton_Click"
+                                                                IsEnabled="{Binding CanInspectOpenClawStatus}"
+                                                                Content="{Binding Strings[SetupOpenClawStatusButton]}" />
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="OpenClawConfigButton_Click"
+                                                                IsEnabled="{Binding CanOpenOpenClawConfig}"
+                                                                Content="{Binding Strings[SetupOpenClawConfigButton]}" />
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="InstallOpenClawNodeButton_Click"
+                                                                IsEnabled="{Binding CanInstallOpenClawNode}"
+                                                                Content="{Binding Strings[SetupOpenClawNodeInstallButton]}" />
+                                                        <Button Margin="0,0,10,10"
+                                                                Click="OpenClawNodeStatusButton_Click"
+                                                                IsEnabled="{Binding CanInspectOpenClawNode}"
+                                                                Content="{Binding Strings[SetupOpenClawNodeStatusButton]}" />
+                                                        <Button Margin="0,0,10,0"
+                                                                Click="OpenClawBrowserStatusButton_Click"
+                                                                IsEnabled="{Binding CanInspectOpenClawBrowser}"
+                                                                Content="{Binding Strings[SetupOpenClawBrowserStatusButton]}" />
+                                                    </WrapPanel>
+
+                                                    <Border Margin="0,14,0,0"
+                                                            Padding="14"
+                                                            CornerRadius="18"
+                                                            Background="#16212B">
+                                                        <StackPanel>
+                                                            <TextBlock FontSize="13"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#FFFDF9"
+                                                                       Text="{Binding Strings[SetupOpenClawNoteTitle]}" />
+                                                            <TextBlock Margin="0,8,0,0"
+                                                                       Foreground="#C3D2DC"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding Strings[SetupOpenClawNote]}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Border>
                                                 </StackPanel>
                                             </Border>
                                         </StackPanel>
@@ -1851,9 +2086,9 @@
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="46" />
                                                 </Grid.ColumnDefinitions>
-                                                <StackPanel>
+                                                <StackPanel Margin="0,0,14,0">
                                                     <TextBlock FontSize="18"
                                                                FontWeight="Bold"
                                                                Foreground="#FFFDF9"
@@ -1863,12 +2098,16 @@
                                                                TextWrapping="Wrap"
                                                                Text="{Binding Strings[DnsSubtitle]}" />
                                                 </StackPanel>
-                                                <TextBlock Grid.Column="1"
-                                                           Margin="12,0,0,0"
-                                                           VerticalAlignment="Center"
-                                                           FontSize="24"
-                                                           Foreground="#FFFDF9"
-                                                           Text="{Binding SetupDnsSectionToggleGlyph}" />
+                                                <Border Grid.Column="1"
+                                                        Style="{StaticResource SetupSectionToggleBadgeDarkStyle}">
+                                                    <Grid>
+                                                        <Rectangle Style="{StaticResource SetupSectionToggleHorizontalLineStyle}"
+                                                                   Fill="#FFFDF9" />
+                                                        <Rectangle Style="{StaticResource SetupSectionToggleVerticalLineStyle}"
+                                                                   Fill="#FFFDF9"
+                                                                   Visibility="{Binding SetupDnsSectionCollapsedIndicatorVisibility}" />
+                                                    </Grid>
+                                                </Border>
                                             </Grid>
                                         </Button>
 
@@ -2233,6 +2472,7 @@
     </Grid>
 </Grid>
 </Window>
+
 
 
 
