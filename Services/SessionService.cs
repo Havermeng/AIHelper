@@ -18,6 +18,8 @@ public sealed class SessionService
     private static readonly Regex SessionIdRegex = new(
         @"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
         RegexOptions.Compiled);
+    private readonly Dictionary<SessionCacheKey, SessionCacheEntry> _sessionCache = [];
+    private ThreadTitleCacheEntry? _threadTitleCache;
 
     public IReadOnlyList<SessionRecord> GetSessions(AppLanguage language = AppLanguage.English)
     {
@@ -26,34 +28,54 @@ public sealed class SessionService
             throw new DirectoryNotFoundException($"Codex sessions folder not found: {SessionsRootPath}");
         }
 
-        var titleLookup = LoadThreadTitles();
+        var threadTitles = LoadThreadTitlesSnapshot();
         var files = new DirectoryInfo(SessionsRootPath)
             .EnumerateFiles("*.jsonl", SearchOption.AllDirectories)
             .OrderByDescending(file => file.LastWriteTimeUtc)
             .ToList();
 
         var sessions = new List<SessionRecord>(files.Count);
+        var activeKeys = new HashSet<SessionCacheKey>();
 
         foreach (var file in files)
         {
+            var cacheKey = new SessionCacheKey(file.FullName, language);
+            activeKeys.Add(cacheKey);
+
             try
             {
-                var session = ParseSessionFile(file, titleLookup, language);
+                if (TryGetCachedSession(cacheKey, file, threadTitles, out var cachedSession))
+                {
+                    sessions.Add(cachedSession);
+                    continue;
+                }
+
+                var session = ParseSessionFile(file, threadTitles.Titles, language);
 
                 if (session is not null)
                 {
+                    _sessionCache[cacheKey] = new SessionCacheEntry(
+                        file.LastWriteTimeUtc.Ticks,
+                        file.Length,
+                        threadTitles.VersionTicks,
+                        threadTitles.VersionLength,
+                        session);
                     sessions.Add(session);
                 }
             }
             catch (IOException)
             {
+                _sessionCache.Remove(cacheKey);
                 sessions.Add(CreateLockedSessionRecord(file, language));
             }
             catch (UnauthorizedAccessException)
             {
+                _sessionCache.Remove(cacheKey);
                 sessions.Add(CreateLockedSessionRecord(file, language));
             }
         }
+
+        CleanupSessionCache(activeKeys);
 
         return sessions
             .OrderByDescending(session => session.UpdatedAtUtc)
@@ -74,14 +96,24 @@ public sealed class SessionService
         DeleteEmptyParentDirectories(Path.GetDirectoryName(session.FilePath));
     }
 
-    private static Dictionary<string, string> LoadThreadTitles()
+    private ThreadTitleCacheEntry LoadThreadTitlesSnapshot()
     {
-        var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
         if (!File.Exists(SessionIndexPath))
         {
-            return titles;
+            _threadTitleCache = new ThreadTitleCacheEntry(0, 0, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+            return _threadTitleCache;
         }
+
+        var fileInfo = new FileInfo(SessionIndexPath);
+
+        if (_threadTitleCache is not null &&
+            _threadTitleCache.VersionTicks == fileInfo.LastWriteTimeUtc.Ticks &&
+            _threadTitleCache.VersionLength == fileInfo.Length)
+        {
+            return _threadTitleCache;
+        }
+
+        var titles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var line in File.ReadLines(SessionIndexPath, Encoding.UTF8))
         {
@@ -107,7 +139,45 @@ public sealed class SessionService
             }
         }
 
-        return titles;
+        _threadTitleCache = new ThreadTitleCacheEntry(fileInfo.LastWriteTimeUtc.Ticks, fileInfo.Length, titles);
+        return _threadTitleCache;
+    }
+
+    private bool TryGetCachedSession(
+        SessionCacheKey cacheKey,
+        FileInfo file,
+        ThreadTitleCacheEntry threadTitles,
+        out SessionRecord session)
+    {
+        if (_sessionCache.TryGetValue(cacheKey, out var cacheEntry) &&
+            cacheEntry.FileLastWriteTicks == file.LastWriteTimeUtc.Ticks &&
+            cacheEntry.FileLength == file.Length &&
+            cacheEntry.ThreadTitleVersionTicks == threadTitles.VersionTicks &&
+            cacheEntry.ThreadTitleVersionLength == threadTitles.VersionLength)
+        {
+            session = cacheEntry.Session;
+            return true;
+        }
+
+        session = null!;
+        return false;
+    }
+
+    private void CleanupSessionCache(HashSet<SessionCacheKey> activeKeys)
+    {
+        if (_sessionCache.Count == 0)
+        {
+            return;
+        }
+
+        var staleKeys = _sessionCache.Keys
+            .Where(key => !activeKeys.Contains(key))
+            .ToList();
+
+        foreach (var staleKey in staleKeys)
+        {
+            _sessionCache.Remove(staleKey);
+        }
     }
 
     private static SessionRecord? ParseSessionFile(
@@ -577,4 +647,18 @@ public sealed class SessionService
             _ => key
         };
     }
+
+    private readonly record struct SessionCacheKey(string FilePath, AppLanguage Language);
+
+    private readonly record struct SessionCacheEntry(
+        long FileLastWriteTicks,
+        long FileLength,
+        long ThreadTitleVersionTicks,
+        long ThreadTitleVersionLength,
+        SessionRecord Session);
+
+    private sealed record ThreadTitleCacheEntry(
+        long VersionTicks,
+        long VersionLength,
+        Dictionary<string, string> Titles);
 }

@@ -10,6 +10,8 @@ public sealed class CodexEnvironmentSnapshot
     public required string NpmVersion { get; init; }
     public required bool GitAvailable { get; init; }
     public required string GitVersion { get; init; }
+    public required bool CodexDesktopAppAvailable { get; init; }
+    public required string CodexDesktopAppDetail { get; init; }
     public required bool CodexAvailable { get; init; }
     public required string CodexVersion { get; init; }
     public required bool LoggedIn { get; init; }
@@ -21,6 +23,7 @@ public sealed class CodexEnvironmentSnapshot
     public required string OllamaExecutablePath { get; init; }
     public required bool OllamaAppAvailable { get; init; }
     public required string OllamaAppPath { get; init; }
+    public required string OllamaAppDetail { get; init; }
     public required bool OllamaServerRunning { get; init; }
     public required bool OllamaTrayRunning { get; init; }
     public required int OllamaModelCount { get; init; }

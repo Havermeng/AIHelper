@@ -200,17 +200,6 @@ public sealed class AppUpdateService
 
     private static string GetCurrentVersion()
     {
-        var assembly = Assembly.GetExecutingAssembly();
-        var informationalVersion = assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion;
-        var normalizedInformationalVersion = NormalizeVersion(informationalVersion);
-
-        if (!string.IsNullOrWhiteSpace(normalizedInformationalVersion))
-        {
-            return normalizedInformationalVersion;
-        }
-
         var executablePath = Environment.ProcessPath;
 
         if (!string.IsNullOrWhiteSpace(executablePath) && File.Exists(executablePath))
@@ -221,6 +210,17 @@ public sealed class AppUpdateService
             {
                 return productVersion;
             }
+        }
+
+        var assembly = Assembly.GetExecutingAssembly();
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        var normalizedInformationalVersion = NormalizeVersion(informationalVersion);
+
+        if (!string.IsNullOrWhiteSpace(normalizedInformationalVersion))
+        {
+            return normalizedInformationalVersion;
         }
 
         var version = assembly.GetName().Version;

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using LaptopSessionViewer.Models;
 using LaptopSessionViewer.Services;
@@ -16,6 +17,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly AppLogService _logService = new();
     private readonly CodexEnvironmentService _environmentService = new();
     private readonly AppUpdateService _updateService = new();
+    private readonly CodexPhotoPasteFixService _photoPasteFixService;
     private readonly DnsManagementService _dnsManagementService = new();
     private readonly DnsPresetSettingsService _dnsPresetSettingsService = new();
     private readonly SessionFavoritesService _favoritesService = new();
@@ -52,7 +54,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _newSessionPrompt = string.Empty;
     private string _newSessionStatusForeground = "#F8E7D6";
     private string _newSessionStatusText = string.Empty;
-    private bool _newSessionUseFullAuto;
     private bool _newSessionUseOss;
     private bool _newSessionUseSearch;
     private string _newSessionWorkingDirectory =
@@ -66,9 +67,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _secondaryDnsServer = string.Empty;
     private string _selectedLocalProvider = string.Empty;
     private string _selectedSandboxMode = "workspace-write";
+    private SettingsCategoryTab _selectedSettingsCategoryTab = SettingsCategoryTab.NeuralSettings;
     private SessionListTab _selectedSessionListTab = SessionListTab.Sessions;
     private LanguageOption? _selectedLanguageOption;
     private bool _settingsDangerousFullAccess;
+    private bool _settingsPhotoPasteFixEnabled;
     private string _settingsStatusForeground = "#F8E7D6";
     private string _settingsStatusKey = "SettingsStatusReady";
     private object[] _settingsStatusArgs = [];
@@ -95,7 +98,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var initialSettings = _settingsService.LoadSettings();
         Strings.SetLanguage(initialSettings.Language);
         _settingsDangerousFullAccess = initialSettings.DefaultDangerousFullAccess;
+        _settingsPhotoPasteFixEnabled = initialSettings.PhotoPasteFixEnabled;
         _selectedLanguageOption = LanguageOptions.First(option => option.Language == initialSettings.Language);
+        _photoPasteFixService = new CodexPhotoPasteFixService(_logService);
+
+        try
+        {
+            _photoPasteFixService.UpdateConfiguration(_settingsPhotoPasteFixEnabled);
+        }
+        catch (Exception exception)
+        {
+            _settingsPhotoPasteFixEnabled = false;
+            _settingsService.SavePhotoPasteFixEnabled(false);
+            _logService.Error(nameof(MainWindow), "Failed to enable the photo paste fix on startup.", exception);
+        }
 
         InitializeComponent();
         DataContext = this;
@@ -114,17 +130,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _refreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(15)
+            Interval = TimeSpan.FromSeconds(20)
         };
         _setupRefreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(10)
+            Interval = TimeSpan.FromSeconds(30)
         };
 
         SourceInitialized += MainWindow_SourceInitialized;
         _refreshTimer.Tick += RefreshTimer_Tick;
         _setupRefreshTimer.Tick += SetupRefreshTimer_Tick;
         Activated += MainWindow_Activated;
+        Deactivated += MainWindow_Deactivated;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
     }
@@ -254,6 +271,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(NewSessionSectionVisibility));
                 OnPropertyChanged(nameof(SetupSectionVisibility));
                 OnPropertyChanged(nameof(SettingsSectionVisibility));
+                UpdateRefreshTimer();
                 UpdateSetupRefreshTimer();
 
                 if (value == AppSection.Setup && IsLoaded)
@@ -264,6 +282,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (value == AppSection.Settings && IsLoaded && _lastAppUpdateSnapshot is null)
                 {
                     _ = RefreshSettingsSectionAsync();
+                }
+
+                if (value == AppSection.Sessions && IsLoaded)
+                {
+                    _ = RefreshSessionsAsync(isAutomaticRefresh: false);
                 }
             }
         }
@@ -300,6 +323,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public Visibility SettingsSectionVisibility =>
         SelectedAppSection == AppSection.Settings ? Visibility.Visible : Visibility.Collapsed;
+
+    public SettingsCategoryTab SelectedSettingsCategoryTab
+    {
+        get => _selectedSettingsCategoryTab;
+        set
+        {
+            if (SetField(ref _selectedSettingsCategoryTab, value))
+            {
+                OnPropertyChanged(nameof(NeuralSettingsTabBackground));
+                OnPropertyChanged(nameof(NeuralSettingsTabForeground));
+                OnPropertyChanged(nameof(AppSettingsTabBackground));
+                OnPropertyChanged(nameof(AppSettingsTabForeground));
+                OnPropertyChanged(nameof(NeuralSettingsTabVisibility));
+                OnPropertyChanged(nameof(AppSettingsTabVisibility));
+            }
+        }
+    }
+
+    public string NeuralSettingsTabBackground =>
+        SelectedSettingsCategoryTab == SettingsCategoryTab.NeuralSettings ? "#E7D8CA" : "#16212B";
+
+    public string NeuralSettingsTabForeground =>
+        SelectedSettingsCategoryTab == SettingsCategoryTab.NeuralSettings ? "#16212B" : "#FFFDF9";
+
+    public string AppSettingsTabBackground =>
+        SelectedSettingsCategoryTab == SettingsCategoryTab.AppSettings ? "#E7D8CA" : "#16212B";
+
+    public string AppSettingsTabForeground =>
+        SelectedSettingsCategoryTab == SettingsCategoryTab.AppSettings ? "#16212B" : "#FFFDF9";
+
+    public Visibility NeuralSettingsTabVisibility =>
+        SelectedSettingsCategoryTab == SettingsCategoryTab.NeuralSettings ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility AppSettingsTabVisibility =>
+        SelectedSettingsCategoryTab == SettingsCategoryTab.AppSettings ? Visibility.Visible : Visibility.Collapsed;
 
     public string SessionsTabText => $"{Strings["SessionsTab"]} ({RegularSessions})";
 
@@ -383,6 +441,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanLaunchNewSession =>
         File.Exists(_environmentService.CodexCommandPath) &&
         Directory.Exists(GetNormalizedNewSessionWorkingDirectory());
+
+    public bool CanInstallCodexDesktopApp => !IsSetupBusy;
+
+    public bool CanOpenCodexDesktopStorePage => !IsSetupBusy;
 
     public bool CanLaunchCodexLogin => File.Exists(_environmentService.CodexCommandPath);
 
@@ -550,8 +612,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     : $"{Strings["DnsAutomaticMode"]}: {SelectedDnsAdapter.DnsServersText}"
                 : SelectedDnsAdapter.DnsServersText;
 
-    public bool IsManualLaunchMode => !NewSessionUseFullAuto;
-
     public bool IsLoading
     {
         get => _isLoading;
@@ -584,6 +644,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanInstallBaseComponents));
                 OnPropertyChanged(nameof(CanRepairWinget));
+                OnPropertyChanged(nameof(CanInstallCodexDesktopApp));
+                OnPropertyChanged(nameof(CanOpenCodexDesktopStorePage));
                 OnPropertyChanged(nameof(CanInstallLocalAiTools));
                 OnPropertyChanged(nameof(CanInstallLocalAiModels));
                 OnPropertyChanged(nameof(CanLaunchOllamaApp));
@@ -738,6 +800,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         set => SetField(ref _settingsDangerousFullAccess, value);
     }
 
+    public bool SettingsPhotoPasteFixEnabled
+    {
+        get => _settingsPhotoPasteFixEnabled;
+        set => SetField(ref _settingsPhotoPasteFixEnabled, value);
+    }
+
     public string SettingsStatusText
     {
         get => _settingsStatusText;
@@ -859,19 +927,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _newSessionUseOss, value))
             {
-                OnPropertyChanged(nameof(NewSessionPreviewCommandText));
-            }
-        }
-    }
-
-    public bool NewSessionUseFullAuto
-    {
-        get => _newSessionUseFullAuto;
-        set
-        {
-            if (SetField(ref _newSessionUseFullAuto, value))
-            {
-                OnPropertyChanged(nameof(IsManualLaunchMode));
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
             }
         }
@@ -1084,10 +1139,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void MainWindow_Activated(object? sender, EventArgs e)
     {
+        UpdateRefreshTimer();
+        UpdateSetupRefreshTimer();
+
+        if (IsLoaded && SelectedAppSection == AppSection.Sessions)
+        {
+            _ = RefreshSessionsAsync(isAutomaticRefresh: false);
+        }
+
         if (IsLoaded && SelectedAppSection == AppSection.Setup)
         {
             _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
         }
+    }
+
+    private void MainWindow_Deactivated(object? sender, EventArgs e)
+    {
+        UpdateRefreshTimer();
+        UpdateSetupRefreshTimer();
     }
 
     private void MainWindow_Closed(object? sender, EventArgs e)
@@ -1095,6 +1164,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         PersistSelectedSessionNote(showStatus: false, refreshFilter: false);
         _refreshTimer.Stop();
         _setupRefreshTimer.Stop();
+        _photoPasteFixService.Dispose();
     }
 
     private void OpenSelectedFileButton_Click(object sender, RoutedEventArgs e)
@@ -1174,15 +1244,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ? selectedSession.WorkingDirectory
             : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments =
-                    $"/k cd /d {QuoteForCommandLine(workingDirectory)} && call {QuoteForCommandLine(_environmentService.CodexCommandPath)} resume {QuoteForCommandLine(selectedSession.SessionId)}",
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = true
-            });
+        _environmentService.LaunchResumeSession(selectedSession.SessionId, workingDirectory);
+        SetStatus("#F8E7D6", "StatusResumeStarted");
     }
 
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -1285,6 +1348,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedAppSection = AppSection.Settings;
     }
 
+    private void NeuralSettingsTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedSettingsCategoryTab = SettingsCategoryTab.NeuralSettings;
+    }
+
+    private void AppSettingsTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedSettingsCategoryTab = SettingsCategoryTab.AppSettings;
+    }
+
     private void UseSelectedSessionDirectoryButton_Click(object sender, RoutedEventArgs e)
     {
         if (!CanUseSelectedSessionDirectory || SelectedSession is null)
@@ -1316,6 +1389,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _environmentService.LaunchInteractiveSession(BuildNewSessionLaunchOptions());
             SetNewSessionStatus("#F8E7D6", Strings["NewSessionStatusStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetNewSessionStatus("#FFD6D6", Strings.Format("NewSessionStatusLaunchFailed", exception.Message));
+        }
+    }
+
+    private void LaunchNewSessionWithImageButton_Click(object sender, RoutedEventArgs e)
+    {
+        var workingDirectory = GetNormalizedNewSessionWorkingDirectory();
+
+        if (!Directory.Exists(workingDirectory))
+        {
+            SetNewSessionStatus("#FFD6D6", Strings.Format("NewSessionStatusDirectoryMissing", workingDirectory));
+            return;
+        }
+
+        if (!File.Exists(_environmentService.CodexCommandPath))
+        {
+            SetNewSessionStatus("#FFD6D6", Strings.Format("StatusCodexCmdMissing", _environmentService.CodexCommandPath));
+            return;
+        }
+
+        var imagePath = GetLaunchImagePath();
+
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            SetNewSessionStatus("#F8E7D6", Strings["StatusImageSelectionCanceled"]);
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchInteractiveSession(BuildNewSessionLaunchOptions([imagePath]));
+            SetNewSessionStatus("#F8E7D6", Strings.Format("NewSessionStatusStartedWithImage", Path.GetFileName(imagePath)));
         }
         catch (Exception exception)
         {
@@ -1517,6 +1625,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetSettingsStatus(
             "#F8E7D6",
             SettingsDangerousFullAccess ? "SettingsStatusDangerousEnabled" : "SettingsStatusDangerousDisabled");
+    }
+
+    private void ApplyPhotoPasteFixSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SettingsPhotoPasteFixEnabled)
+        {
+            var confirmation = MessageBox.Show(
+                Strings["SettingsPhotoPasteFixWarningMessage"],
+                Strings["SettingsPhotoPasteFixWarningTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                SettingsPhotoPasteFixEnabled = false;
+                return;
+            }
+        }
+
+        try
+        {
+            _photoPasteFixService.UpdateConfiguration(SettingsPhotoPasteFixEnabled);
+            _settingsService.SavePhotoPasteFixEnabled(SettingsPhotoPasteFixEnabled);
+            SetSettingsStatus(
+                "#F8E7D6",
+                SettingsPhotoPasteFixEnabled
+                    ? "SettingsStatusPhotoPasteFixEnabled"
+                    : "SettingsStatusPhotoPasteFixDisabled");
+        }
+        catch (Exception exception)
+        {
+            SettingsPhotoPasteFixEnabled = _photoPasteFixService.IsEnabled;
+            SetSettingsStatus("#FFD6D6", "SettingsStatusPhotoPasteFixFailed", exception.Message);
+            _logService.Error(nameof(MainWindow), "Failed to apply the photo paste fix setting.", exception);
+        }
     }
 
     private async void RefreshDnsAdaptersButton_Click(object sender, RoutedEventArgs e)
@@ -1831,6 +1974,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _environmentService.LaunchCodexInstallRepairTerminal();
             SetSetupStatus("#F8E7D6", Strings["SetupStatusInstallerStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void InstallCodexDesktopAppButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.OpenCodexDesktopStorePage();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusCodexDesktopInstallStarted"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void OpenCodexDesktopStorePageButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.OpenCodexDesktopStorePage();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusCodexDesktopStoreOpened"]);
         }
         catch (Exception exception)
         {
@@ -2267,15 +2436,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetNewSessionStatus("#F8E7D6", Strings["NewSessionPresetLocalApplied"]);
     }
 
-    private void ApplyBeginnerAutoPresetButton_Click(object sender, RoutedEventArgs e)
-    {
-        ApplyBeginnerAutoPreset();
-        SetNewSessionStatus("#F8E7D6", Strings["NewSessionPresetAutoApplied"]);
-    }
-
     private void ApplyBeginnerCloudPreset()
     {
-        NewSessionUseFullAuto = false;
         NewSessionUseOss = false;
         NewSessionUseSearch = false;
         SelectedLocalProvider = string.Empty;
@@ -2295,7 +2457,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplyBeginnerLocalPreset()
     {
-        NewSessionUseFullAuto = false;
         NewSessionUseOss = true;
         NewSessionUseSearch = false;
         SelectedLocalProvider = "ollama";
@@ -2311,13 +2472,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         NewSessionProfile = string.Empty;
     }
 
-    private void ApplyBeginnerAutoPreset()
+    private void ApplyProjectReviewExampleButton_Click(object sender, RoutedEventArgs e)
     {
-        NewSessionUseOss = false;
-        NewSessionUseSearch = false;
-        SelectedLocalProvider = string.Empty;
-        NewSessionUseFullAuto = true;
-        NewSessionProfile = string.Empty;
+        ApplyBeginnerCloudPreset();
+        NewSessionPrompt = Strings["NewSessionExampleProjectPrompt"];
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionExampleProjectApplied"]);
+    }
+
+    private void ApplyBugFixExampleButton_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyBeginnerCloudPreset();
+        NewSessionPrompt = Strings["NewSessionExampleBugfixPrompt"];
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionExampleBugfixApplied"]);
+    }
+
+    private void ApplyLocalExampleButton_Click(object sender, RoutedEventArgs e)
+    {
+        ApplyBeginnerLocalPreset();
+        NewSessionPrompt = Strings["NewSessionExampleLocalPrompt"];
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionExampleLocalApplied"]);
     }
 
     private void LaunchCodexLoginButton_Click(object sender, RoutedEventArgs e)
@@ -2370,26 +2543,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var currentId = preferredSessionId ?? SelectedSession?.SessionId;
         var filter = SearchText.Trim();
-        var sourceSessions = SelectedSessionListTab == SessionListTab.Favorites
-            ? _allSessions.Where(session => session.IsFavorite).ToList()
-            : _allSessions.Where(session => !session.IsFavorite).ToList();
+        IEnumerable<SessionRecord> query = SelectedSessionListTab == SessionListTab.Favorites
+            ? _allSessions.Where(session => session.IsFavorite)
+            : _allSessions.Where(session => !session.IsFavorite);
 
-        var filtered = string.IsNullOrWhiteSpace(filter)
-            ? sourceSessions
-            : sourceSessions
-                .Where(session => session.SearchBlob.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            query = query.Where(session => session.SearchBlob.Contains(filter, StringComparison.OrdinalIgnoreCase));
+        }
 
-        filtered = filtered
+        var filtered = query
             .OrderByDescending(session => session.UpdatedAtUtc)
             .ToList();
 
-        Sessions.Clear();
-
-        foreach (var session in filtered)
-        {
-            Sessions.Add(session);
-        }
+        ReplaceVisibleSessions(filtered);
 
         if (Sessions.Count == 0)
         {
@@ -2400,6 +2567,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         SelectedSession = Sessions.FirstOrDefault(session => session.SessionId == currentId) ?? Sessions[0];
         OnPropertyChanged(nameof(HasVisibleSessions));
+    }
+
+    private void ReplaceVisibleSessions(IReadOnlyList<SessionRecord> filteredSessions)
+    {
+        if (Sessions.Count == filteredSessions.Count)
+        {
+            var sequenceMatches = true;
+
+            for (var index = 0; index < filteredSessions.Count; index++)
+            {
+                if (!ReferenceEquals(Sessions[index], filteredSessions[index]))
+                {
+                    sequenceMatches = false;
+                    break;
+                }
+            }
+
+            if (sequenceMatches)
+            {
+                return;
+            }
+        }
+
+        Sessions.Clear();
+
+        foreach (var session in filteredSessions)
+        {
+            Sessions.Add(session);
+        }
     }
 
     private void ApplySessions(IReadOnlyList<SessionRecord> refreshedSessions)
@@ -2625,6 +2821,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        OllamaQuickChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupOllamaAppTitle"],
+                environment.OllamaAppAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                environment.OllamaAppAvailable
+                    ? environment.OllamaAppDetail
+                    : Strings["SetupOllamaAppDetailMissing"],
+                environment.OllamaAppAvailable));
         OllamaQuickChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupOllamaRuntimeTitle"],
@@ -3151,7 +3355,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SettingsDangerousFullAccess)
             {
-                NewSessionUseFullAuto = false;
                 SelectedSandboxMode = "danger-full-access";
                 SelectedApprovalPolicy = "never";
             }
@@ -3174,6 +3377,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(NewSessionPreviewCommandText));
+    }
+
+    private bool ShouldUseDangerousBypassForNewSession()
+    {
+        return string.Equals(SelectedSandboxMode, "danger-full-access", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(SelectedApprovalPolicy, "never", StringComparison.OrdinalIgnoreCase);
     }
 
     private void LoadDnsPresets(DnsPreset? preferredPreset = null)
@@ -3521,12 +3730,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : $"{session.BaseSearchBlob} {session.Note}";
     }
 
-    private NewSessionLaunchOptions BuildNewSessionLaunchOptions()
+    private NewSessionLaunchOptions BuildNewSessionLaunchOptions(IReadOnlyList<string>? imagePaths = null)
     {
+        var useDangerousBypass = ShouldUseDangerousBypassForNewSession();
+
         return new NewSessionLaunchOptions
         {
             Prompt = NewSessionPrompt,
             WorkingDirectory = GetNormalizedNewSessionWorkingDirectory(),
+            ImagePaths = imagePaths ?? [],
             Model = NewSessionModel,
             Profile = NewSessionProfile,
             SandboxMode = SelectedSandboxMode,
@@ -3534,8 +3746,85 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             LocalProvider = SelectedLocalProvider,
             UseSearch = NewSessionUseSearch,
             UseOss = NewSessionUseOss,
-            UseFullAuto = NewSessionUseFullAuto
+            UseDangerousBypass = useDangerousBypass
         };
+    }
+
+    private string? GetLaunchImagePath()
+    {
+        var clipboardPath = TryGetImagePathFromClipboard();
+
+        if (!string.IsNullOrWhiteSpace(clipboardPath))
+        {
+            return clipboardPath;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Image files (*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            Title = Strings["ImagePickerTitle"]
+        };
+
+        return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+    }
+
+    private string? TryGetImagePathFromClipboard()
+    {
+        try
+        {
+            if (Clipboard.ContainsFileDropList())
+            {
+                var file = Clipboard.GetFileDropList()
+                    .Cast<string>()
+                    .FirstOrDefault(IsSupportedImageFile);
+
+                if (!string.IsNullOrWhiteSpace(file) && File.Exists(file))
+                {
+                    return file;
+                }
+            }
+
+            if (!Clipboard.ContainsImage())
+            {
+                return null;
+            }
+
+            var image = Clipboard.GetImage();
+
+            if (image is null)
+            {
+                return null;
+            }
+
+            var directory = Path.Combine(Path.GetTempPath(), "AIHelper", "clipboard-images");
+            Directory.CreateDirectory(directory);
+
+            var imagePath = Path.Combine(directory, $"clipboard-{DateTime.Now:yyyyMMdd-HHmmssfff}.png");
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(image));
+
+            using var stream = File.Create(imagePath);
+            encoder.Save(stream);
+            return imagePath;
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Clipboard image export failed.", exception);
+            return null;
+        }
+    }
+
+    private static bool IsSupportedImageFile(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".gif", StringComparison.OrdinalIgnoreCase);
     }
 
     private string GetNormalizedNewSessionWorkingDirectory()
@@ -3670,6 +3959,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(CanInstallBaseComponents));
             OnPropertyChanged(nameof(CanRepairWinget));
             OnPropertyChanged(nameof(CanLaunchNewSession));
+            OnPropertyChanged(nameof(CanInstallCodexDesktopApp));
+            OnPropertyChanged(nameof(CanOpenCodexDesktopStorePage));
             OnPropertyChanged(nameof(CanLaunchCodexLogin));
             OnPropertyChanged(nameof(CanInstallLocalAiTools));
             OnPropertyChanged(nameof(CanInstallLocalAiModels));
@@ -3775,10 +4066,26 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.GitAvailable));
         SetupCodexChecks.Add(
             CreateSetupCheckItem(
+                Strings["SetupCheckCodexDesktop"],
+                snapshot.CodexDesktopAppAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.CodexDesktopAppAvailable
+                    ? snapshot.CodexDesktopAppDetail
+                    : Strings["SetupDetailCodexDesktopMissing"],
+                snapshot.CodexDesktopAppAvailable));
+        SetupCodexChecks.Add(
+            CreateSetupCheckItem(
                 Strings["SetupCheckCodex"],
                 snapshot.CodexAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.CodexAvailable ? snapshot.CodexVersion : Strings["SetupDetailCodexMissing"],
                 snapshot.CodexAvailable));
+        SetupLocalAiChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOllamaApp"],
+                snapshot.OllamaAppAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.OllamaAppAvailable
+                    ? snapshot.OllamaAppDetail
+                    : Strings["SetupDetailOllamaAppMissing"],
+                snapshot.OllamaAppAvailable));
         SetupLocalAiChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckLmStudio"],
@@ -3842,6 +4149,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.SessionsFolderPath,
                 snapshot.SessionsFolderExists));
 
+        OnPropertyChanged(nameof(CanInstallCodexDesktopApp));
+        OnPropertyChanged(nameof(CanOpenCodexDesktopStorePage));
         OnPropertyChanged(nameof(CanInstallLocalAiModels));
         OnPropertyChanged(nameof(CanLaunchOllamaApp));
         OnPropertyChanged(nameof(CanStartOllamaServer));
@@ -3943,7 +4252,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void UpdateRefreshTimer()
     {
-        if (AutoRefreshEnabled)
+        if (AutoRefreshEnabled && SelectedAppSection == AppSection.Sessions && IsActive)
         {
             _refreshTimer.Start();
         }
@@ -3955,7 +4264,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void UpdateSetupRefreshTimer()
     {
-        if (SelectedAppSection == AppSection.Setup)
+        if (SelectedAppSection == AppSection.Setup && IsActive)
         {
             _setupRefreshTimer.Start();
         }

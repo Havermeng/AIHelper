@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.IO;
+using Microsoft.Win32;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -11,7 +12,13 @@ namespace LaptopSessionViewer.Services;
 
 public sealed class CodexEnvironmentService
 {
+    private const string CodexCliWingetId = "OpenAI.Codex";
+    private const string CodexDesktopStoreId = "9PLM9XGG6VKS";
+    private const string CodexDesktopStoreSource = "msstore";
+    private const string CodexDesktopStoreUrl = "ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS";
+    private const string CodexDesktopWebUrl = "https://apps.microsoft.com/detail/9plm9xgg6vks";
     private const string OllamaWingetId = "Ollama.Ollama";
+    private const string OllamaWindowsDownloadUrl = "https://ollama.com/download/windows";
     private const string LmStudioWingetId = "ElementLabs.LMStudio";
     private const string ComfyUiDesktopWingetId = "Comfy.ComfyUI-Desktop";
     private const string PinokioWingetId = "pinokiocomputer.pinokio";
@@ -30,6 +37,7 @@ public sealed class CodexEnvironmentService
     ];
 
     public string CodexCommandPath =>
+        ResolveCodexExecutablePath() ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "codex.cmd");
 
     public string SessionsFolder =>
@@ -53,6 +61,7 @@ public sealed class CodexEnvironmentService
         var node = RunCommand("cmd.exe", "/c node --version");
         var npm = RunCommand("cmd.exe", "/c npm --version");
         var git = RunCommand("cmd.exe", "/c git --version");
+        var codexDesktopPackage = GetInstalledWingetPackageInfo(CodexDesktopStoreId, sourceName: CodexDesktopStoreSource);
 
         var codexVersion = File.Exists(CodexCommandPath)
             ? RunCommand("cmd.exe", $"/c \"\"{CodexCommandPath}\" --version\"")
@@ -85,6 +94,9 @@ public sealed class CodexEnvironmentService
         var ollamaServerRunning = !string.IsNullOrWhiteSpace(ollamaPath) && IsLocalTcpEndpointReachable(11434);
         var ollamaTrayRunning = IsAnyProcessRunning("ollama");
         var ollamaModelsSummary = BuildOllamaModelsSummary(installedOllamaModels);
+        var ollamaAppDetail = !string.IsNullOrWhiteSpace(ollamaAppPath)
+            ? $"{GetProductVersion(ollamaAppPath)}{Environment.NewLine}{ollamaAppPath}"
+            : string.Empty;
 
         return new CodexEnvironmentSnapshot
         {
@@ -96,6 +108,8 @@ public sealed class CodexEnvironmentService
             NpmVersion = npm.Output,
             GitAvailable = git.Success,
             GitVersion = git.Output,
+            CodexDesktopAppAvailable = codexDesktopPackage.IsInstalled,
+            CodexDesktopAppDetail = codexDesktopPackage.Detail,
             CodexAvailable = codexVersion.Success,
             CodexVersion = codexVersion.Output,
             LoggedIn =
@@ -109,6 +123,7 @@ public sealed class CodexEnvironmentService
             OllamaExecutablePath = ollamaPath ?? string.Empty,
             OllamaAppAvailable = !string.IsNullOrWhiteSpace(ollamaAppPath),
             OllamaAppPath = ollamaAppPath ?? string.Empty,
+            OllamaAppDetail = ollamaAppDetail,
             OllamaServerRunning = ollamaServerRunning,
             OllamaTrayRunning = ollamaTrayRunning,
             OllamaModelCount = installedOllamaModels.Count,
@@ -256,26 +271,31 @@ public sealed class CodexEnvironmentService
             : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         var arguments = BuildInteractiveArguments(options);
-        var commandLine = new StringBuilder();
-        commandLine.Append("/k cd /d ");
-        commandLine.Append(QuoteForCommandLine(workingDirectory));
-        commandLine.Append(" && call ");
-        commandLine.Append(QuoteForCommandLine(CodexCommandPath));
+        StartCodexProcess(arguments, workingDirectory);
+    }
 
-        if (!string.IsNullOrWhiteSpace(arguments))
+    public void LaunchResumeSession(string sessionId, string workingDirectory, IReadOnlyList<string>? imagePaths = null)
+    {
+        var normalizedWorkingDirectory = Directory.Exists(workingDirectory)
+            ? workingDirectory
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        var arguments = new List<string>
         {
-            commandLine.Append(' ');
-            commandLine.Append(arguments);
+            "resume"
+        };
+
+        if (imagePaths is not null)
+        {
+            foreach (var imagePath in imagePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
+            {
+                arguments.Add("-i");
+                arguments.Add(QuoteForCommandLine(imagePath));
+            }
         }
 
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = commandLine.ToString(),
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = true
-            });
+        arguments.Add(QuoteForCommandLine(sessionId));
+        StartCodexProcess(string.Join(" ", arguments), normalizedWorkingDirectory);
     }
 
     public void LaunchCodexInstallRepairTerminal()
@@ -290,6 +310,30 @@ public sealed class CodexEnvironmentService
                 Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
                 UseShellExecute = true,
                 Verb = "runas"
+            });
+    }
+
+    public void LaunchCodexDesktopInstallTerminal()
+    {
+        var scriptPath = CreateTempScriptPath("aihelper-install-codex-desktop");
+        File.WriteAllText(scriptPath, BuildCodexDesktopInstallScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true
+            });
+    }
+
+    public void OpenCodexDesktopStorePage()
+    {
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = CodexDesktopWebUrl,
+                UseShellExecute = true
             });
     }
 
@@ -576,14 +620,7 @@ public sealed class CodexEnvironmentService
 
     public void LaunchCodexLoginTerminal()
     {
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/k call {QuoteForCommandLine(CodexCommandPath)} login",
-                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                UseShellExecute = true
-            });
+        StartCodexProcess("login", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
     }
 
     public static void OpenFolder(string path)
@@ -604,6 +641,12 @@ public sealed class CodexEnvironmentService
             QuoteForCommandLine(options.WorkingDirectory)
         };
 
+        foreach (var imagePath in options.ImagePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            arguments.Add("-i");
+            arguments.Add(QuoteForCommandLine(imagePath));
+        }
+
         if (!string.IsNullOrWhiteSpace(options.Model))
         {
             arguments.Add("-m");
@@ -616,9 +659,9 @@ public sealed class CodexEnvironmentService
             arguments.Add(QuoteForCommandLine(options.Profile.Trim()));
         }
 
-        if (options.UseFullAuto)
+        if (options.UseDangerousBypass)
         {
-            arguments.Add("--full-auto");
+            arguments.Add("--dangerously-bypass-approvals-and-sandbox");
         }
         else
         {
@@ -785,7 +828,7 @@ public sealed class CodexEnvironmentService
 
     private static string BuildInstallScript()
     {
-        return """
+        return $$"""
 $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Text) {
@@ -822,16 +865,80 @@ Ensure-WingetPackage 'OpenJS.NodeJS.LTS' 'Node.js LTS'
 Ensure-WingetPackage 'Git.Git' 'Git'
 
 $npmCmd = Resolve-NpmCmd
-if (-not $npmCmd) {
-    throw 'npm.cmd not found after prerequisite installation.'
+
+Write-Step 'Installing or updating Codex CLI'
+if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    winget install --id {{CodexCliWingetId}} -e --accept-package-agreements --accept-source-agreements
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Step 'Finished'
+        Write-Host 'Codex CLI install/update completed.' -ForegroundColor Green
+        Write-Host 'The native Codex desktop app is installed separately through Microsoft Store.' -ForegroundColor Yellow
+        Write-Host 'Next step: run `codex login` if the CLI is not authenticated yet.' -ForegroundColor Green
+        return
+    }
+
+    Write-Host 'winget could not finish Codex CLI installation. Falling back to npm.' -ForegroundColor Yellow
 }
 
-Write-Step 'Installing or updating OpenAI Codex CLI'
-& $npmCmd install -g @openai/codex
+if ($npmCmd) {
+    & $npmCmd install -g @openai/codex
+
+    if ($LASTEXITCODE -ne 0) {
+        throw 'npm could not finish Codex CLI installation.'
+    }
+}
+else {
+    throw 'Neither winget nor npm.cmd is available for Codex CLI installation.'
+}
 
 Write-Step 'Finished'
-Write-Host 'Codex stack install/update completed.' -ForegroundColor Green
+Write-Host 'Codex CLI install/update completed.' -ForegroundColor Green
+Write-Host 'The native Codex desktop app is installed separately through Microsoft Store.' -ForegroundColor Yellow
 Write-Host 'Next step: run `codex login` if the CLI is not authenticated yet.' -ForegroundColor Green
+""";
+    }
+
+    private static string BuildCodexDesktopInstallScript()
+    {
+        return $$"""
+$ErrorActionPreference = 'Continue'
+
+$storeUrl = '{{CodexDesktopStoreUrl}}'
+$webUrl = '{{CodexDesktopWebUrl}}'
+
+Write-Host ''
+Write-Host '== Installing Codex desktop app ==' -ForegroundColor Cyan
+Write-Host 'Official source: Microsoft Store (OpenAI).' -ForegroundColor Yellow
+
+if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    winget install --id {{CodexDesktopStoreId}} -e --source {{CodexDesktopStoreSource}} --accept-package-agreements --accept-source-agreements --disable-interactivity
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ''
+        Write-Host 'Codex desktop app install/update command finished.' -ForegroundColor Green
+        Write-Host 'Return to AIHelper and refresh the Codex section.' -ForegroundColor Green
+        return
+    }
+
+    Write-Host ''
+    Write-Host 'winget could not finish the Codex desktop app install. Opening the Store page instead.' -ForegroundColor Yellow
+}
+else {
+    Write-Host ''
+    Write-Host 'winget is not available. Opening the Microsoft Store page for Codex.' -ForegroundColor Yellow
+}
+
+try {
+    Start-Process $storeUrl
+}
+catch {
+    Start-Process $webUrl
+}
+
+Write-Host ''
+Write-Host 'The official Codex desktop app page was opened.' -ForegroundColor Green
+Write-Host 'Install the app there, then return to AIHelper and refresh the Codex section.' -ForegroundColor Green
 """;
     }
 
@@ -866,24 +973,38 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 
     private static string BuildOllamaInstallScript()
     {
-        return """
-$ErrorActionPreference = 'Stop'
+        return $$"""
+$ErrorActionPreference = 'Continue'
 
-if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-    throw 'winget.exe is not available on this system.'
+if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
+    Write-Host ''
+    Write-Host '== Installing or updating Ollama app ==' -ForegroundColor Cyan
+    winget install --id {{OllamaWingetId}} -e --accept-package-agreements --accept-source-agreements
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ''
+        Write-Host 'Ollama app install/update command finished.' -ForegroundColor Green
+        Write-Host 'What to do next:' -ForegroundColor Cyan
+        Write-Host '1. Return to AIHelper and refresh the Local AI status.' -ForegroundColor Yellow
+        Write-Host '2. If old terminals still cannot see ollama, open a new terminal window.' -ForegroundColor Yellow
+        Write-Host '3. A large main window is not required. Use AIHelper to start the local server if needed.' -ForegroundColor Yellow
+        Write-Host '4. Download your first local model before connecting Ollama to OpenClaw.' -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ''
+    Write-Host 'winget could not finish the Ollama install. Opening the official Windows download page instead.' -ForegroundColor Yellow
+}
+else {
+    Write-Host ''
+    Write-Host 'winget is not available. Opening the official Ollama download page.' -ForegroundColor Yellow
 }
 
-Write-Host ''
-Write-Host '== Installing or updating Ollama ==' -ForegroundColor Cyan
-winget install --id Ollama.Ollama -e --accept-package-agreements --accept-source-agreements
+Start-Process '{{OllamaWindowsDownloadUrl}}'
 
 Write-Host ''
-Write-Host 'Ollama install/update command finished.' -ForegroundColor Green
-Write-Host 'What to do next:' -ForegroundColor Cyan
-Write-Host '1. Return to AIHelper and refresh the Local AI status.' -ForegroundColor Yellow
-Write-Host '2. If old terminals still cannot see ollama, open a new terminal window.' -ForegroundColor Yellow
-Write-Host '3. A large main window is not required. Use AIHelper to start the local server if needed.' -ForegroundColor Yellow
-Write-Host '4. Download your first local model before connecting Ollama to OpenClaw.' -ForegroundColor Yellow
+Write-Host 'The official Ollama Windows download page was opened.' -ForegroundColor Green
+Write-Host 'Download OllamaSetup.exe there, install the app, then refresh the Local AI section in AIHelper.' -ForegroundColor Green
 """;
     }
 
@@ -935,8 +1056,12 @@ Write-Host 'Return to AIHelper and refresh the Local AI status.' -ForegroundColo
 """;
     }
 
-    private static string BuildWingetInstallScript(string packageId, string label)
+    private static string BuildWingetInstallScript(string packageId, string label, string? sourceName = null)
     {
+        var sourceArgument = string.IsNullOrWhiteSpace(sourceName)
+            ? string.Empty
+            : $" --source {sourceName}";
+
         return
             "$ErrorActionPreference = 'Stop'" + Environment.NewLine +
             Environment.NewLine +
@@ -946,7 +1071,7 @@ Write-Host 'Return to AIHelper and refresh the Local AI status.' -ForegroundColo
             Environment.NewLine +
             "Write-Host ''" + Environment.NewLine +
             $"Write-Host '== Installing or updating {label} ==' -ForegroundColor Cyan" + Environment.NewLine +
-            $"winget install --id {packageId} -e --accept-package-agreements --accept-source-agreements" + Environment.NewLine +
+            $"winget install --id {packageId} -e{sourceArgument} --accept-package-agreements --accept-source-agreements" + Environment.NewLine +
             Environment.NewLine +
             "Write-Host ''" + Environment.NewLine +
             $"Write-Host '{label} install/update command finished.' -ForegroundColor Green" + Environment.NewLine +
@@ -1301,11 +1426,14 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return installedModels;
     }
 
-    private static WingetPackageInfo GetInstalledWingetPackageInfo(string packageId)
+    private static WingetPackageInfo GetInstalledWingetPackageInfo(string packageId, string? sourceName = null)
     {
+        var sourceArgument = string.IsNullOrWhiteSpace(sourceName)
+            ? string.Empty
+            : $" --source {sourceName}";
         var listResult = RunCommand(
             "cmd.exe",
-            $"/c winget list --id {packageId} -e --accept-source-agreements --disable-interactivity");
+            $"/c winget list --id {packageId} -e{sourceArgument} --accept-source-agreements --disable-interactivity");
 
         if (!listResult.Success ||
             listResult.Output.Contains("No installed package found", StringComparison.OrdinalIgnoreCase))
@@ -1422,6 +1550,26 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return FindExistingPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Ollama", "Ollama.exe"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Ollama", "Ollama.exe"));
+    }
+
+    private static string? ResolveCodexExecutablePath()
+    {
+        var nativeCommandPath = ResolveCodexNativeExecutablePath();
+
+        if (!string.IsNullOrWhiteSpace(nativeCommandPath))
+        {
+            return nativeCommandPath;
+        }
+
+        var commandPath = ResolveExecutableOnPath("codex.cmd", "codex");
+
+        if (!string.IsNullOrWhiteSpace(commandPath))
+        {
+            return commandPath;
+        }
+
+        return FindExistingPath(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "codex.cmd"));
     }
 
     private static string? ResolveLmStudioExecutablePath()
@@ -1899,6 +2047,156 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
     private static string QuoteForCommandLine(string value)
     {
         return $"\"{value.Replace("\"", "\"\"")}\"";
+    }
+
+    private void StartCodexProcess(string arguments, string workingDirectory)
+    {
+        var nativeCodexPath = ResolveCodexNativeExecutablePath();
+        var windowsTerminalPath = ResolveWindowsTerminalExecutablePath();
+
+        if (!string.IsNullOrWhiteSpace(windowsTerminalPath))
+        {
+            StartCodexInWindowsTerminal(windowsTerminalPath, arguments, workingDirectory);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(nativeCodexPath))
+        {
+            StartCodexNativeProcess(nativeCodexPath, arguments, workingDirectory);
+            return;
+        }
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = CodexCommandPath,
+                Arguments = arguments,
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = true
+            });
+    }
+
+    private void StartCodexInWindowsTerminal(string windowsTerminalPath, string arguments, string workingDirectory)
+    {
+        var command = BuildCodexTerminalCommand(arguments);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = windowsTerminalPath,
+                Arguments = $"new-tab --title {QuoteForCommandLine("AIHelper Codex")} -d {QuoteForCommandLine(workingDirectory)} cmd.exe /k {QuoteForCommandLine(command)}",
+                UseShellExecute = true
+            });
+    }
+
+    private void StartCodexNativeProcess(string nativeCodexPath, string arguments, string workingDirectory)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = nativeCodexPath,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false
+        };
+
+        var supportPath = ResolveCodexSupportPathDirectory(nativeCodexPath);
+
+        if (!string.IsNullOrWhiteSpace(supportPath))
+        {
+            startInfo.Environment["PATH"] = $"{supportPath};{Environment.GetEnvironmentVariable("PATH")}";
+        }
+
+        Process.Start(startInfo);
+    }
+
+    private string BuildCodexTerminalCommand(string arguments)
+    {
+        var launchPath = CodexCommandPath;
+        var launchCommand = string.IsNullOrWhiteSpace(arguments)
+            ? QuoteForCommandLine(launchPath)
+            : $"{QuoteForCommandLine(launchPath)} {arguments}";
+
+        var supportPath = ResolveCodexSupportPathDirectory(launchPath);
+
+        return string.IsNullOrWhiteSpace(supportPath)
+            ? $"title AIHelper Codex && {launchCommand}"
+            : $"title AIHelper Codex && set \"PATH={supportPath};%PATH%\" && {launchCommand}";
+    }
+
+    private static string? ResolveCodexNativeExecutablePath()
+    {
+        var commandPath = ResolveExecutableOnPath("codex.exe");
+
+        if (!string.IsNullOrWhiteSpace(commandPath))
+        {
+            return commandPath;
+        }
+
+        var applicationData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        return FindExistingPath(
+            Path.Combine(localApplicationData, "Microsoft", "WinGet", "Links", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-arm64", "vendor", "aarch64-pc-windows-msvc", "codex", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "vendor", "aarch64-pc-windows-msvc", "codex", "codex.exe"));
+    }
+
+    private static string? ResolveCodexSupportPathDirectory(string codexExecutablePath)
+    {
+        var codexDirectory = Path.GetDirectoryName(codexExecutablePath);
+
+        if (string.IsNullOrWhiteSpace(codexDirectory))
+        {
+            return null;
+        }
+
+        var architectureRoot = Directory.GetParent(codexDirectory)?.FullName;
+
+        if (string.IsNullOrWhiteSpace(architectureRoot))
+        {
+            return null;
+        }
+
+        var supportPath = Path.Combine(architectureRoot, "path");
+        return Directory.Exists(supportPath) ? supportPath : null;
+    }
+
+    private static string? ResolveWindowsTerminalExecutablePath()
+    {
+        var commandPath = ResolveExecutableOnPath("wt.exe", "wt");
+
+        if (!string.IsNullOrWhiteSpace(commandPath))
+        {
+            return commandPath;
+        }
+
+        var registryPath = ResolveAppPathFromRegistry("wt.exe");
+
+        if (!string.IsNullOrWhiteSpace(registryPath))
+        {
+            return registryPath;
+        }
+
+        return FindExistingPath(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", "wt.exe"));
+    }
+
+    private static string? ResolveAppPathFromRegistry(string executableName)
+    {
+        foreach (var hive in new[] { Registry.CurrentUser, Registry.LocalMachine })
+        {
+            using var appPathKey = hive.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\App Paths\{executableName}");
+            var value = appPathKey?.GetValue(null) as string;
+
+            if (!string.IsNullOrWhiteSpace(value) && File.Exists(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     private readonly record struct CommandResult(bool Success, string Output)

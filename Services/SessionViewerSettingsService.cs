@@ -31,7 +31,8 @@ public sealed class SessionViewerSettingsService
                     "ru" => AppLanguage.Russian,
                     _ => AppLanguage.English
                 },
-                DefaultDangerousFullAccess = settings?.DefaultDangerousFullAccess ?? false
+                DefaultDangerousFullAccess = settings?.DefaultDangerousFullAccess ?? false,
+                PhotoPasteFixEnabled = settings?.PhotoPasteFixEnabled ?? false
             };
         }
         catch (Exception exception) when (exception is JsonException or IOException)
@@ -50,6 +51,11 @@ public sealed class SessionViewerSettingsService
         return LoadSettings().DefaultDangerousFullAccess;
     }
 
+    public bool LoadPhotoPasteFixEnabled()
+    {
+        return LoadSettings().PhotoPasteFixEnabled;
+    }
+
     public void SaveSettings(SessionViewerSettings settings)
     {
         var directoryPath = Path.GetDirectoryName(_settingsPath);
@@ -62,7 +68,8 @@ public sealed class SessionViewerSettingsService
         var dto = new SettingsDto
         {
             Language = settings.Language == AppLanguage.Russian ? "ru" : "en",
-            DefaultDangerousFullAccess = settings.DefaultDangerousFullAccess
+            DefaultDangerousFullAccess = settings.DefaultDangerousFullAccess,
+            PhotoPasteFixEnabled = settings.PhotoPasteFixEnabled
         };
 
         var json = JsonSerializer.Serialize(
@@ -89,10 +96,19 @@ public sealed class SessionViewerSettingsService
         SaveSettings(settings);
     }
 
+    public void SavePhotoPasteFixEnabled(bool enabled)
+    {
+        var settings = LoadSettings();
+        settings.PhotoPasteFixEnabled = enabled;
+        SaveSettings(settings);
+    }
+
     private sealed class SettingsDto
     {
         public string Language { get; set; } = "en";
 
         public bool DefaultDangerousFullAccess { get; set; }
+
+        public bool PhotoPasteFixEnabled { get; set; }
     }
 }

@@ -53,6 +53,9 @@ public sealed class SessionRecord : INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(HasNote));
                 OnPropertyChanged(nameof(NotePreview));
+                OnPropertyChanged(nameof(DisplayTitle));
+                OnPropertyChanged(nameof(SecondaryTitle));
+                OnPropertyChanged(nameof(HasSecondaryTitle));
             }
         }
     }
@@ -68,6 +71,12 @@ public sealed class SessionRecord : INotifyPropertyChanged
     public string ToolCallCountText => $"{ToolCallCount} tools";
 
     public string ShortSessionId => SessionId.Length <= 12 ? SessionId : SessionId[..12];
+
+    public string DisplayTitle => HasNote ? TrimPreview(Note, 90) : Title;
+
+    public string SecondaryTitle => HasNote ? TrimPreview(Title, 90) : Preview;
+
+    public bool HasSecondaryTitle => !string.IsNullOrWhiteSpace(SecondaryTitle);
 
     public string FavoriteBadgeText => IsFavorite ? "FAV" : string.Empty;
 
