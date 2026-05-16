@@ -8,6 +8,7 @@ public sealed class SessionRecord : INotifyPropertyChanged
     private bool _isFavorite;
     private string _note = string.Empty;
     private string _searchBlob = string.Empty;
+    private string _transcriptText = string.Empty;
 
     public required string SessionId { get; init; }
     public required string Title { get; init; }
@@ -22,7 +23,6 @@ public sealed class SessionRecord : INotifyPropertyChanged
     public required string CliVersion { get; init; }
     public required string FilePath { get; init; }
     public required string RelativePath { get; init; }
-    public required string TranscriptText { get; init; }
     public required int UserMessageCount { get; init; }
     public required int AssistantMessageCount { get; init; }
     public required int ToolCallCount { get; init; }
@@ -64,6 +64,12 @@ public sealed class SessionRecord : INotifyPropertyChanged
     {
         get => _searchBlob;
         set => SetField(ref _searchBlob, value);
+    }
+
+    public string TranscriptText
+    {
+        get => _transcriptText;
+        set => SetField(ref _transcriptText, value);
     }
 
     public string MessageCountText => $"{TotalMessageCount} msgs";

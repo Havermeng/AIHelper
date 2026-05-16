@@ -14,6 +14,9 @@ public sealed class CodexEnvironmentSnapshot
     public required string CodexDesktopAppDetail { get; init; }
     public required bool CodexAvailable { get; init; }
     public required string CodexVersion { get; init; }
+    public required bool OpenCodeAvailable { get; init; }
+    public required string OpenCodeVersion { get; init; }
+    public required string OpenCodeDetail { get; init; }
     public required bool LoggedIn { get; init; }
     public required string LoginStatus { get; init; }
     public required bool SessionsFolderExists { get; init; }

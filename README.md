@@ -2,7 +2,7 @@
 
 AIHelper is a Windows WPF desktop app for working with local Codex sessions without dropping into the terminal for routine tasks.
 
-It combines session browsing, session launch presets, environment checks, and Windows DNS management in one desktop utility.
+It combines session browsing, session launch presets, environment checks, local AI tooling, plugins/MCP catalog management, and Windows DNS management in one desktop utility.
 
 ## Screenshots
 
@@ -23,7 +23,8 @@ It combines session browsing, session launch presets, environment checks, and Wi
 - Browse local Codex sessions from `%USERPROFILE%\.codex\sessions`
 - Search, inspect, favorite, annotate, delete, and resume sessions
 - Start a new Codex session with model, profile, sandbox, approval, and OSS options
-- Check the local Codex toolchain from the app
+- Check and install the local AI tooling stack from the app
+- Track Codex, OpenCode, local AI runtimes, models, agents, plugins, and MCP entries
 - Manage Windows DNS settings with presets, custom presets, import/export, DoH, and rollback
 - Switch the UI language between English and Russian
 

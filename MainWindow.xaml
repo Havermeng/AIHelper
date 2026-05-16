@@ -13,7 +13,9 @@
         MinHeight="640"
         WindowStartupLocation="CenterScreen"
         Background="#F4EFE6"
-        FontFamily="Bahnschrift">
+        FontFamily="Bahnschrift"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <local:BindingProxy x:Key="ViewModelProxy"
@@ -151,9 +153,20 @@
         </Style>
 
         <Style x:Key="ActionButtonStyle" TargetType="Button">
-            <Setter Property="MinWidth" Value="156" />
+            <Setter Property="MinWidth" Value="148" />
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Padding" Value="8,4" />
+        </Style>
+
+        <Style x:Key="SetupActionButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinHeight" Value="34" />
             <Setter Property="FontSize" Value="11" />
-            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Padding" Value="10,7" />
+        </Style>
+
+        <Style x:Key="SetupDangerActionButtonStyle" TargetType="Button" BasedOn="{StaticResource SetupActionButtonStyle}">
+            <Setter Property="Background" Value="#B42318" />
+            <Setter Property="BorderBrush" Value="#B42318" />
         </Style>
 
         <Style x:Key="SetupSectionToggleButtonStyle" TargetType="Button">
@@ -296,6 +309,12 @@
             <Setter Property="RowHeight" Value="76" />
             <Setter Property="ColumnHeaderHeight" Value="48" />
             <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="EnableRowVirtualization" Value="True" />
+            <Setter Property="EnableColumnVirtualization" Value="True" />
+            <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
+            <Setter Property="ScrollViewer.IsDeferredScrollingEnabled" Value="True" />
         </Style>
 
         <Style TargetType="DataGridColumnHeader">
@@ -319,18 +338,24 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="12">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="190" />
-            <ColumnDefinition Width="12" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+    <Grid Margin="{Binding AppOuterMargin}">
+        <Border Width="{Binding AppContentWidth}"
+                HorizontalAlignment="Center"
+                Background="Transparent">
+            <Grid DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="{Binding ShellSidebarColumnWidth}" />
+                    <ColumnDefinition Width="{Binding ShellMainGapColumnWidth}" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
 
         <Border Grid.Column="0"
                 Padding="16"
                 CornerRadius="24"
-                Background="#16212B">
-            <Grid>
+                Background="#16212B"
+                BorderBrush="#274452"
+                BorderThickness="1">
+            <Grid DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="18" />
@@ -365,6 +390,12 @@
                             Foreground="{Binding NewSessionSectionButtonForeground}"
                             Content="{Binding Strings[SectionNewSessionNav]}" />
                     <Button Style="{StaticResource SideNavButtonStyle}"
+                            Click="ExtensionsSectionButton_Click"
+                            Background="{Binding ExtensionsSectionButtonBackground}"
+                            BorderBrush="{Binding ExtensionsSectionButtonBackground}"
+                            Foreground="{Binding ExtensionsSectionButtonForeground}"
+                            Content="{Binding Strings[SectionExtensionsNav]}" />
+                    <Button Style="{StaticResource SideNavButtonStyle}"
                             Click="SetupSectionButton_Click"
                             Background="{Binding SetupSectionButtonBackground}"
                             BorderBrush="{Binding SetupSectionButtonBackground}"
@@ -397,7 +428,9 @@
 
         <Border Grid.Row="0"
                 Padding="12"
-                CornerRadius="18">
+                CornerRadius="18"
+                BorderBrush="#355465"
+                BorderThickness="1">
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                     <GradientStop Color="#132734" Offset="0" />
@@ -406,7 +439,7 @@
                 </LinearGradientBrush>
             </Border.Background>
 
-            <Grid>
+            <Grid DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="6" />
@@ -418,7 +451,7 @@
                 <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="280" />
+                        <ColumnDefinition Width="{Binding SessionsHeaderSearchColumnWidth}" />
                     </Grid.ColumnDefinitions>
 
                     <StackPanel>
@@ -433,20 +466,24 @@
                                    Text="{Binding Strings[HeroSubtitle]}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1"
-                                HorizontalAlignment="Right">
-                        <TextBlock Margin="2,0,0,3"
-                                   FontSize="12"
-                                   Foreground="#FFFDF9"
-                                   Text="{Binding Strings[SearchLabel]}" />
-                        <TextBox Width="280"
-                                 Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
-                        <TextBlock Margin="2,2,0,0"
-                                   FontSize="9"
-                                   Foreground="#F8E7D6"
-                                   TextTrimming="CharacterEllipsis"
-                                   Text="{Binding Strings[SearchHelp]}" />
-                    </StackPanel>
+                    <Border Grid.Column="1"
+                            Margin="12,0,0,0"
+                            Padding="12"
+                            CornerRadius="18"
+                            Background="#203240">
+                        <StackPanel>
+                            <TextBlock Margin="2,0,0,3"
+                                       FontSize="12"
+                                       Foreground="#FFFDF9"
+                                       Text="{Binding Strings[SearchLabel]}" />
+                            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="2,2,0,0"
+                                       FontSize="9"
+                                       Foreground="#F8E7D6"
+                                       TextTrimming="CharacterEllipsis"
+                                       Text="{Binding Strings[SearchHelp]}" />
+                        </StackPanel>
+                    </Border>
                 </Grid>
 
                 <Grid Grid.Row="2">
@@ -518,59 +555,81 @@
                     </Border>
                     </Grid>
 
-                    <Grid Grid.Column="1"
-                          Margin="10,0,0,0"
-                          HorizontalAlignment="Right">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="156" />
-                            <ColumnDefinition Width="4" />
-                            <ColumnDefinition Width="156" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="4" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="4" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+                    <Border Grid.Column="1"
+                            Margin="12,0,0,0"
+                            Padding="10"
+                            CornerRadius="18"
+                            Background="#203240"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{Binding SessionsActionButtonColumnWidth}" />
+                                <ColumnDefinition Width="6" />
+                                <ColumnDefinition Width="{Binding SessionsActionButtonColumnWidth}" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="6" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                        <Button Grid.Row="0"
-                                Grid.Column="0"
-                                Style="{StaticResource ActionButtonStyle}"
-                                Click="RefreshButton_Click"
-                                IsEnabled="{Binding IsRefreshAvailable}"
-                                Content="{Binding Strings[Refresh]}" />
-                        <Button Grid.Row="0"
-                                Grid.Column="2"
-                                Style="{StaticResource ActionButtonStyle}"
-                                Click="OpenSessionsFolderButton_Click"
-                                Content="{Binding Strings[OpenSessionsFolder]}" />
-                        <Button Grid.Row="2"
-                                Grid.Column="0"
-                                Style="{StaticResource ActionButtonStyle}"
-                                Click="ResumeSelectedSessionButton_Click"
-                                IsEnabled="{Binding CanResumeSelectedSession}"
-                                Content="{Binding Strings[ResumeInTerminal]}" />
-                        <Button Grid.Row="2"
-                                Grid.Column="2"
-                                Style="{StaticResource ActionButtonStyle}"
-                                Click="ToggleFavoriteButton_Click"
-                                Content="{Binding FavoriteButtonText}" />
-                        <Button Grid.Row="4"
-                                Grid.Column="0"
-                                Style="{StaticResource ActionButtonStyle}"
-                                Click="OpenSelectedFileButton_Click"
-                                IsEnabled="{Binding CanOpenSelectedFile}"
-                                Content="{Binding Strings[OpenSessionFile]}" />
-                        <Button Grid.Row="4"
-                                Grid.Column="2"
-                                Style="{StaticResource ActionButtonStyle}"
-                                Click="DeleteSelectedSessionButton_Click"
-                                IsEnabled="{Binding CanDeleteSelectedSession}"
-                                Background="#B42318"
-                                BorderBrush="#B42318"
-                                Content="{Binding Strings[DeleteSession]}" />
-                    </Grid>
+                            <Button Grid.Row="0"
+                                    Grid.Column="0"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="RefreshButton_Click"
+                                    IsEnabled="{Binding IsRefreshAvailable}"
+                                    Content="{Binding Strings[Refresh]}" />
+                            <Button Grid.Row="0"
+                                    Grid.Column="2"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="OpenSessionsFolderButton_Click"
+                                    Content="{Binding Strings[OpenSessionsFolder]}" />
+                            <Button Grid.Row="2"
+                                    Grid.Column="0"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="ResumeSelectedSessionButton_Click"
+                                    IsEnabled="{Binding CanResumeSelectedSession}"
+                                    Content="{Binding Strings[ResumeInTerminal]}" />
+                            <Button Grid.Row="2"
+                                    Grid.Column="2"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="ResumeSelectedSessionInOpenCodeButton_Click"
+                                    IsEnabled="{Binding CanResumeSelectedSessionInOpenCode}"
+                                    ToolTip="{Binding SelectedSessionOpenCodeBridgeText}"
+                                    Content="{Binding OpenCodeResumeButtonText}" />
+                            <Button Grid.Row="4"
+                                    Grid.Column="0"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="ToggleFavoriteButton_Click"
+                                    Content="{Binding FavoriteButtonText}" />
+                            <Button Grid.Row="4"
+                                    Grid.Column="2"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="RefreshSelectedSessionOpenCodeBridgeButton_Click"
+                                    IsEnabled="{Binding CanRefreshSelectedSessionOpenCodeBridge}"
+                                    ToolTip="{Binding SelectedSessionOpenCodeBridgeText}"
+                                    Content="{Binding Strings[RefreshOpenCodeBridge]}" />
+                            <Button Grid.Row="6"
+                                    Grid.Column="0"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="OpenSelectedFileButton_Click"
+                                    IsEnabled="{Binding CanOpenSelectedFile}"
+                                    Content="{Binding Strings[OpenSessionFile]}" />
+                            <Button Grid.Row="6"
+                                    Grid.Column="2"
+                                    Style="{StaticResource ActionButtonStyle}"
+                                    Click="DeleteSelectedSessionButton_Click"
+                                    IsEnabled="{Binding CanDeleteSelectedSession}"
+                                    Background="#B42318"
+                                    BorderBrush="#B42318"
+                                    Content="{Binding Strings[DeleteSession]}" />
+                        </Grid>
+                    </Border>
                 </Grid>
 
                 <Grid Grid.Row="4"
@@ -602,292 +661,381 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="340" />
-            </Grid.ColumnDefinitions>
+        <Border Grid.Row="2"
+                Padding="26"
+                CornerRadius="28"
+                Background="#FFFDF9"
+                BorderBrush="#E7DBCC"
+                BorderThickness="1"
+                Visibility="{Binding SessionsMainPlaceholderVisibility}">
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock FontSize="22"
+                           FontWeight="Bold"
+                           Foreground="#16212B"
+                           Text="{Binding Strings[SessionsStartupLoadingTitle]}" />
+                <TextBlock Margin="0,10,0,0"
+                           Foreground="#475467"
+                           TextWrapping="Wrap"
+                           Text="{Binding Strings[SessionsStartupLoadingText]}" />
+                <ProgressBar Margin="0,18,0,0"
+                             Height="8"
+                             IsIndeterminate="True" />
+                <TextBlock Margin="0,14,0,0"
+                           Foreground="{Binding StatusForeground}"
+                           TextWrapping="Wrap"
+                           Text="{Binding StatusText}" />
+            </StackPanel>
+        </Border>
 
-            <Border Background="#FFFDF9"
-                    CornerRadius="28"
-                    Padding="18">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="14" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+        <ContentControl Grid.Row="2"
+                        Content="{Binding SessionsMainContent}">
+            <ContentControl.ContentTemplate>
+                <DataTemplate>
+                    <Grid DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="{Binding SectionRailGapColumnWidth}" />
+                            <ColumnDefinition Width="{Binding SessionsDetailColumnWidth}" />
+                        </Grid.ColumnDefinitions>
 
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Style="{StaticResource SessionTabButtonStyle}"
-                                    Click="SessionsTabButton_Click"
-                                    Background="{Binding SessionsTabBackground}"
-                                    BorderBrush="{Binding SessionsTabBackground}"
-                                    Foreground="{Binding SessionsTabForeground}"
-                                    Content="{Binding SessionsTabText}" />
-                            <Button Style="{StaticResource SessionTabButtonStyle}"
-                                    Margin="0"
-                                    Click="FavoritesTabButton_Click"
-                                    Background="{Binding FavoritesTabBackground}"
-                                    BorderBrush="{Binding FavoritesTabBackground}"
-                                    Foreground="{Binding FavoritesTabForeground}"
-                                    Content="{Binding FavoritesTabText}" />
-                        </StackPanel>
-
-                        <Border Margin="0,12,0,0"
-                                Padding="12"
-                                CornerRadius="16"
-                                Background="#F7F3EC">
-                            <StackPanel>
-                                <TextBlock FontSize="13"
-                                           FontWeight="SemiBold"
-                                           Foreground="#16212B"
-                                           Text="{Binding Strings[SessionsGuideTitle]}" />
-                                <TextBlock Margin="0,6,0,0"
-                                           Foreground="#475467"
-                                           TextWrapping="Wrap"
-                                           Text="{Binding Strings[SessionsGuideText]}" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <Grid Grid.Row="2">
-                        <DataGrid ItemsSource="{Binding Sessions}"
-                                  SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
-                            <DataGrid.Columns>
-                                <DataGridTemplateColumn Width="*"
-                                                        Header="{Binding Data.Strings[GridSession], Source={StaticResource ViewModelProxy}}">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Margin="0,6,0,0">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock FontWeight="SemiBold"
-                                                               Text="{Binding DisplayTitle}" />
-                                                    <Border Margin="8,0,0,0"
-                                                            Padding="8,2"
-                                                            CornerRadius="10"
-                                                            Background="#FDE8C8"
-                                                            Visibility="{Binding IsFavorite, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                        <TextBlock FontSize="11"
-                                                                   FontWeight="SemiBold"
-                                                                   Foreground="#9A5A00"
-                                                                   Text="{Binding FavoriteBadgeText}" />
-                                                    </Border>
-                                                </StackPanel>
-                                                <TextBlock Margin="0,4,0,0"
-                                                           FontSize="12"
-                                                           Foreground="#667085"
-                                                           Text="{Binding SecondaryTitle}"
-                                                           Visibility="{Binding HasSecondaryTitle, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                <TextBlock Margin="0,6,0,0"
-                                                           FontSize="12"
-                                                           Foreground="#667085"
-                                                           Text="{Binding ShortSessionId}" />
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
-                                <DataGridTextColumn Width="150"
-                                                    Binding="{Binding UpdatedAtText}"
-                                                    Header="{Binding Data.Strings[GridUpdated], Source={StaticResource ViewModelProxy}}" />
-                                <DataGridTextColumn Width="78"
-                                                    Binding="{Binding TotalMessageCount}"
-                                                    Header="{Binding Data.Strings[GridMessages], Source={StaticResource ViewModelProxy}}" />
-                                <DataGridTextColumn Width="78"
-                                                    Binding="{Binding ToolCallCount}"
-                                                    Header="{Binding Data.Strings[GridTools], Source={StaticResource ViewModelProxy}}" />
-                                <DataGridTextColumn Width="92"
-                                                    Binding="{Binding ModelProvider}"
-                                                    Header="{Binding Data.Strings[GridModel], Source={StaticResource ViewModelProxy}}" />
-                                <DataGridTextColumn Width="92"
-                                                    Binding="{Binding Source}"
-                                                    Header="{Binding Data.Strings[GridSource], Source={StaticResource ViewModelProxy}}" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-
-                        <TextBlock HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   FontSize="16"
-                                   FontWeight="SemiBold"
-                                   Foreground="#475467"
-                                   Text="{Binding EmptySessionsText}">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Visibility" Value="Collapsed" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding HasVisibleSessions}" Value="False">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                    </Grid>
-                </Grid>
-            </Border>
-
-            <Border Grid.Column="2"
-                    Background="#16212B"
-                    CornerRadius="28"
-                    Padding="18">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel>
-                        <TextBlock FontSize="22"
-                                   FontWeight="Bold"
-                                   Foreground="#FFFDF9"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding SelectedSessionTitleText}" />
-                        <TextBlock Margin="0,8,0,0"
-                                   FontSize="13"
-                                   Foreground="#C3D2DC"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding SelectedSessionPreviewText}" />
-
-                        <Border Margin="0,20,0,0"
-                                Background="#203240"
-                                CornerRadius="18"
-                                Padding="14">
+                        <Border Background="#FFFDF9"
+                                CornerRadius="28"
+                                Padding="18"
+                                BorderBrush="#E7DBCC"
+                                BorderThickness="1">
                             <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="118" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="14" />
+                                    <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Foreground="#9AB0BE" Text="{Binding Strings[DetailSessionId]}" />
-                                <TextBlock Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.SessionId, TargetNullValue=-}" />
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Style="{StaticResource SessionTabButtonStyle}"
+                                                Click="SessionsTabButton_Click"
+                                                Background="{Binding SessionsTabBackground}"
+                                                BorderBrush="{Binding SessionsTabBackground}"
+                                                Foreground="{Binding SessionsTabForeground}"
+                                                Content="{Binding SessionsTabText}" />
+                                        <Button Style="{StaticResource SessionTabButtonStyle}"
+                                                Margin="0"
+                                                Click="FavoritesTabButton_Click"
+                                                Background="{Binding FavoritesTabBackground}"
+                                                BorderBrush="{Binding FavoritesTabBackground}"
+                                                Foreground="{Binding FavoritesTabForeground}"
+                                                Content="{Binding FavoritesTabText}" />
+                                    </StackPanel>
 
-                                <TextBlock Grid.Row="1" Foreground="#9AB0BE" Text="{Binding Strings[DetailStarted]}" />
-                                <TextBlock Grid.Row="1" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.StartedAtText, TargetNullValue=-}" />
+                                    <Border Margin="0,12,0,0"
+                                            Padding="12"
+                                            CornerRadius="16"
+                                            Background="#F7F3EC">
+                                        <StackPanel>
+                                            <TextBlock FontSize="13"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#16212B"
+                                                       Text="{Binding Strings[SessionsGuideTitle]}" />
+                                            <TextBlock Margin="0,6,0,0"
+                                                       Foreground="#475467"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SessionsGuideText]}" />
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
 
-                                <TextBlock Grid.Row="2" Foreground="#9AB0BE" Text="{Binding Strings[DetailUpdated]}" />
-                                <TextBlock Grid.Row="2" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.UpdatedAtText, TargetNullValue=-}" />
+                                <Grid Grid.Row="2">
+                                    <DataGrid ItemsSource="{Binding Sessions}"
+                                              SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Width="*"
+                                                                    Header="{Binding Data.Strings[GridSession], Source={StaticResource ViewModelProxy}}">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <StackPanel Margin="0,6,0,0">
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock FontWeight="SemiBold"
+                                                                           Text="{Binding DisplayTitle}" />
+                                                                <Border Margin="8,0,0,0"
+                                                                        Padding="8,2"
+                                                                        CornerRadius="10"
+                                                                        Background="#FDE8C8"
+                                                                        Visibility="{Binding IsFavorite, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                    <TextBlock FontSize="11"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="#9A5A00"
+                                                                               Text="{Binding FavoriteBadgeText}" />
+                                                                </Border>
+                                                            </StackPanel>
+                                                            <TextBlock Margin="0,4,0,0"
+                                                                       FontSize="12"
+                                                                       Foreground="#667085"
+                                                                       Text="{Binding SecondaryTitle}"
+                                                                       Visibility="{Binding HasSecondaryTitle, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                            <TextBlock Margin="0,6,0,0"
+                                                                       FontSize="12"
+                                                                       Foreground="#667085"
+                                                                       Text="{Binding ShortSessionId}" />
+                                                        </StackPanel>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Width="150"
+                                                                Binding="{Binding UpdatedAtText}"
+                                                                Header="{Binding Data.Strings[GridUpdated], Source={StaticResource ViewModelProxy}}" />
+                                            <DataGridTextColumn Width="78"
+                                                                Binding="{Binding TotalMessageCount}"
+                                                                Header="{Binding Data.Strings[GridMessages], Source={StaticResource ViewModelProxy}}" />
+                                            <DataGridTextColumn Width="78"
+                                                                Binding="{Binding ToolCallCount}"
+                                                                Header="{Binding Data.Strings[GridTools], Source={StaticResource ViewModelProxy}}" />
+                                            <DataGridTextColumn Width="92"
+                                                                Binding="{Binding ModelProvider}"
+                                                                Header="{Binding Data.Strings[GridModel], Source={StaticResource ViewModelProxy}}" />
+                                            <DataGridTextColumn Width="92"
+                                                                Binding="{Binding Source}"
+                                                                Header="{Binding Data.Strings[GridSource], Source={StaticResource ViewModelProxy}}" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
 
-                                <TextBlock Grid.Row="3" Foreground="#9AB0BE" Text="{Binding Strings[DetailDuration]}" />
-                                <TextBlock Grid.Row="3" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.DurationText, TargetNullValue=-}" />
-
-                                <TextBlock Grid.Row="4" Foreground="#9AB0BE" Text="{Binding Strings[DetailMessages]}" />
-                                <TextBlock Grid.Row="4" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.TotalMessageCount, TargetNullValue=-}" />
-
-                                <TextBlock Grid.Row="5" Foreground="#9AB0BE" Text="{Binding Strings[DetailToolCalls]}" />
-                                <TextBlock Grid.Row="5" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.ToolCallCount, TargetNullValue=-}" />
-
-                                <TextBlock Grid.Row="6" Foreground="#9AB0BE" Text="{Binding Strings[DetailModel]}" />
-                                <TextBlock Grid.Row="6" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.ModelProvider, TargetNullValue=-}" />
-
-                                <TextBlock Grid.Row="7" Foreground="#9AB0BE" Text="{Binding Strings[DetailSource]}" />
-                                <TextBlock Grid.Row="7" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.Source, TargetNullValue=-}" />
-
-                                <TextBlock Grid.Row="8" Foreground="#9AB0BE" Text="{Binding Strings[DetailCliVersion]}" />
-                                <TextBlock Grid.Row="8" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.CliVersion, TargetNullValue=-}" />
-
-                                <TextBlock Grid.Row="9" Foreground="#9AB0BE" Text="{Binding Strings[DetailCwd]}" />
-                                <TextBlock Grid.Row="9"
-                                           Grid.Column="1"
-                                           Foreground="#FFFDF9"
-                                           TextWrapping="Wrap"
-                                           Text="{Binding SelectedSession.WorkingDirectory, TargetNullValue=-}" />
+                                    <TextBlock HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               FontSize="16"
+                                               FontWeight="SemiBold"
+                                               Foreground="#475467"
+                                               Text="{Binding EmptySessionsText}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasVisibleSessions}" Value="False">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
                             </Grid>
                         </Border>
 
-                        <TextBlock Margin="0,18,0,0"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FFFDF9"
-                                   Text="{Binding Strings[DetailFavorite]}" />
-                        <TextBlock Margin="0,8,0,0"
-                                   Foreground="#C3D2DC"
-                                   Text="{Binding SelectedSessionFavoriteText}" />
+                        <Border Grid.Column="2"
+                                Background="#16212B"
+                                CornerRadius="28"
+                                Padding="18"
+                                BorderBrush="#274452"
+                                BorderThickness="1">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
+                                    <TextBlock FontSize="22"
+                                               FontWeight="Bold"
+                                               Foreground="#FFFDF9"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding SelectedSessionTitleText}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               FontSize="13"
+                                               Foreground="#C3D2DC"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding SelectedSessionPreviewText}" />
 
-                        <TextBlock Margin="0,18,0,0"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FFFDF9"
-                                   Text="{Binding Strings[DetailNotes]}" />
-                        <TextBlock Margin="0,8,0,0"
-                                   Foreground="#C3D2DC"
-                                   Text="{Binding Strings[NotesHint]}" />
-                        <TextBox Margin="0,10,0,0"
-                                 MinHeight="120"
-                                 AcceptsReturn="True"
-                                 IsEnabled="{Binding CanEditSelectedSessionNote}"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 HorizontalScrollBarVisibility="Disabled"
-                                 Background="#FFFDF9"
-                                 Foreground="#16212B"
-                                 Text="{Binding SelectedSessionNote, UpdateSourceTrigger=PropertyChanged}" />
-                        <StackPanel Margin="0,10,0,0"
-                                    Orientation="Horizontal">
-                            <Button Width="108"
-                                    Click="SaveSelectedNoteButton_Click"
-                                    IsEnabled="{Binding CanSaveSelectedSessionNote}"
-                                    Content="{Binding Strings[SaveNote]}" />
-                            <Button Width="108"
-                                    Margin="10,0,0,0"
-                                    Click="ClearSelectedNoteButton_Click"
-                                    IsEnabled="{Binding CanClearSelectedSessionNote}"
-                                    Background="#475467"
-                                    BorderBrush="#475467"
-                                    Content="{Binding Strings[ClearNote]}" />
-                        </StackPanel>
+                                    <Border Margin="0,20,0,0"
+                                            Background="#203240"
+                                            CornerRadius="18"
+                                            Padding="14">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="118" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
 
-                        <TextBlock Margin="0,18,0,0"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FFFDF9"
-                                   Text="{Binding Strings[DetailSessionFile]}" />
-                        <TextBlock Margin="0,8,0,0"
-                                   Foreground="#C3D2DC"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding SelectedSession.RelativePath, TargetNullValue=-}" />
+                                            <TextBlock Foreground="#9AB0BE" Text="{Binding Strings[DetailSessionId]}" />
+                                            <TextBlock Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.SessionId, TargetNullValue=-}" />
 
-                        <TextBlock Margin="0,18,0,0"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FFFDF9"
-                                   Text="{Binding Strings[DetailLastMessage]}" />
-                        <TextBlock Margin="0,8,0,0"
-                                   Foreground="#C3D2DC"
-                                   TextWrapping="Wrap"
-                                   Text="{Binding SelectedSession.LastMessagePreview, TargetNullValue=-}" />
+                                            <TextBlock Grid.Row="1" Foreground="#9AB0BE" Text="{Binding Strings[DetailStarted]}" />
+                                            <TextBlock Grid.Row="1" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.StartedAtText, TargetNullValue=-}" />
 
-                        <TextBlock Margin="0,18,0,0"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Foreground="#FFFDF9"
-                                   Text="{Binding Strings[DetailTranscript]}" />
-                        <TextBox Margin="0,10,0,0"
-                                 MinHeight="340"
-                                 AcceptsReturn="True"
-                                 IsReadOnly="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 HorizontalScrollBarVisibility="Disabled"
-                                 FontFamily="Consolas"
-                                 Background="#0F1720"
-                                 Foreground="#E9EEF2"
-                                 Text="{Binding SelectedSessionTranscriptText, Mode=OneWay}" />
-                    </StackPanel>
-                </ScrollViewer>
-            </Border>
-        </Grid>
+                                            <TextBlock Grid.Row="2" Foreground="#9AB0BE" Text="{Binding Strings[DetailUpdated]}" />
+                                            <TextBlock Grid.Row="2" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.UpdatedAtText, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="3" Foreground="#9AB0BE" Text="{Binding Strings[DetailDuration]}" />
+                                            <TextBlock Grid.Row="3" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.DurationText, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="4" Foreground="#9AB0BE" Text="{Binding Strings[DetailMessages]}" />
+                                            <TextBlock Grid.Row="4" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.TotalMessageCount, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="5" Foreground="#9AB0BE" Text="{Binding Strings[DetailToolCalls]}" />
+                                            <TextBlock Grid.Row="5" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.ToolCallCount, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="6" Foreground="#9AB0BE" Text="{Binding Strings[DetailModel]}" />
+                                            <TextBlock Grid.Row="6" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.ModelProvider, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="7" Foreground="#9AB0BE" Text="{Binding Strings[DetailSource]}" />
+                                            <TextBlock Grid.Row="7" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.Source, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="8" Foreground="#9AB0BE" Text="{Binding Strings[DetailCliVersion]}" />
+                                            <TextBlock Grid.Row="8" Grid.Column="1" Foreground="#FFFDF9" Text="{Binding SelectedSession.CliVersion, TargetNullValue=-}" />
+
+                                            <TextBlock Grid.Row="9" Foreground="#9AB0BE" Text="{Binding Strings[DetailCwd]}" />
+                                            <TextBlock Grid.Row="9"
+                                                       Grid.Column="1"
+                                                       Foreground="#FFFDF9"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding SelectedSession.WorkingDirectory, TargetNullValue=-}" />
+                                        </Grid>
+                                    </Border>
+
+                                    <TextBlock Margin="0,18,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[DetailFavorite]}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#C3D2DC"
+                                               Text="{Binding SelectedSessionFavoriteText}" />
+
+                                    <Border Margin="0,18,0,0"
+                                            Padding="12"
+                                            CornerRadius="16"
+                                            Background="#203240">
+                                        <StackPanel>
+                                            <TextBlock FontSize="14"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#FFFDF9"
+                                                       Text="{Binding Strings[DetailQuickActions]}" />
+                                            <UniformGrid Margin="0,10,0,0"
+                                                         Columns="2">
+                                                <Button Margin="0,0,8,0"
+                                                        Style="{StaticResource ActionButtonStyle}"
+                                                        Click="CopySelectedSessionIdButton_Click"
+                                                        Content="{Binding Strings[CopySessionId]}" />
+                                                <Button Margin="8,0,0,0"
+                                                        Style="{StaticResource ActionButtonStyle}"
+                                                        Click="OpenSelectedSessionDirectoryButton_Click"
+                                                        IsEnabled="{Binding CanOpenSelectedSessionDirectory}"
+                                                        Content="{Binding Strings[OpenSessionDirectory]}" />
+                                            </UniformGrid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <TextBlock Margin="0,18,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[DetailOpenCodeBridge]}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#C3D2DC"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding SelectedSessionOpenCodeBridgeText}" />
+                                    <StackPanel Margin="0,12,0,0">
+                                        <Button Style="{StaticResource ActionButtonStyle}"
+                                                Click="ResumeSelectedSessionInOpenCodeButton_Click"
+                                                IsEnabled="{Binding CanResumeSelectedSessionInOpenCode}"
+                                                ToolTip="{Binding SelectedSessionOpenCodeBridgeText}"
+                                                Content="{Binding OpenCodeResumeButtonText}" />
+                                        <Button Margin="0,8,0,0"
+                                                Style="{StaticResource ActionButtonStyle}"
+                                                Click="RefreshSelectedSessionOpenCodeBridgeButton_Click"
+                                                IsEnabled="{Binding CanRefreshSelectedSessionOpenCodeBridge}"
+                                                ToolTip="{Binding SelectedSessionOpenCodeBridgeText}"
+                                                Content="{Binding Strings[RefreshOpenCodeBridge]}" />
+                                    </StackPanel>
+
+                                    <TextBlock Margin="0,18,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[DetailNotes]}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#C3D2DC"
+                                               Text="{Binding Strings[NotesHint]}" />
+                                    <TextBox Margin="0,10,0,0"
+                                             MinHeight="120"
+                                             AcceptsReturn="True"
+                                             IsEnabled="{Binding CanEditSelectedSessionNote}"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             HorizontalScrollBarVisibility="Disabled"
+                                             Background="#FFFDF9"
+                                             Foreground="#16212B"
+                                             Text="{Binding SelectedSessionNote, UpdateSourceTrigger=PropertyChanged}" />
+                                    <StackPanel Margin="0,10,0,0"
+                                                Orientation="Horizontal">
+                                        <Button Width="108"
+                                                Click="SaveSelectedNoteButton_Click"
+                                                IsEnabled="{Binding CanSaveSelectedSessionNote}"
+                                                Content="{Binding Strings[SaveNote]}" />
+                                        <Button Width="108"
+                                                Margin="10,0,0,0"
+                                                Click="ClearSelectedNoteButton_Click"
+                                                IsEnabled="{Binding CanClearSelectedSessionNote}"
+                                                Background="#475467"
+                                                BorderBrush="#475467"
+                                                Content="{Binding Strings[ClearNote]}" />
+                                    </StackPanel>
+
+                                    <TextBlock Margin="0,18,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[DetailSessionFile]}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#C3D2DC"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding SelectedSession.RelativePath, TargetNullValue=-}" />
+
+                                    <TextBlock Margin="0,18,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[DetailLastMessage]}" />
+                                    <TextBlock Margin="0,8,0,0"
+                                               Foreground="#C3D2DC"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding SelectedSession.LastMessagePreview, TargetNullValue=-}" />
+
+                                    <TextBlock Margin="0,18,0,0"
+                                               FontSize="15"
+                                               FontWeight="SemiBold"
+                                               Foreground="#FFFDF9"
+                                               Text="{Binding Strings[DetailTranscript]}" />
+                                    <ProgressBar Margin="0,10,0,0"
+                                                 Height="6"
+                                                 IsIndeterminate="True"
+                                                 Visibility="{Binding IsSelectedSessionTranscriptLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                    <TextBox Margin="0,10,0,0"
+                                             MinHeight="340"
+                                             AcceptsReturn="True"
+                                             IsReadOnly="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             HorizontalScrollBarVisibility="Disabled"
+                                             FontFamily="Consolas"
+                                             Background="#0F1720"
+                                             Foreground="#E9EEF2"
+                                             Text="{Binding SelectedSessionTranscriptText, Mode=OneWay}" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
     </Grid>
 
-            <Grid Visibility="{Binding NewSessionSectionVisibility}">
+            <Grid Visibility="{Binding NewSessionSectionVisibility}"
+                  DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="16" />
@@ -896,7 +1044,9 @@
 
                 <Border Grid.Row="0"
                         Padding="18"
-                        CornerRadius="24">
+                        CornerRadius="24"
+                        BorderBrush="#355465"
+                        BorderThickness="1">
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                             <GradientStop Color="#132734" Offset="0" />
@@ -921,13 +1071,15 @@
                 <Grid Grid.Row="2">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="16" />
-                        <ColumnDefinition Width="350" />
+                        <ColumnDefinition Width="{Binding SectionRailGapColumnWidth}" />
+                        <ColumnDefinition Width="{Binding NewSessionAsideColumnWidth}" />
                     </Grid.ColumnDefinitions>
 
                     <Border Background="#F7F3EC"
                             CornerRadius="28"
-                            Padding="20">
+                            Padding="20"
+                            BorderBrush="#E7DBCC"
+                            BorderThickness="1">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel>
                                 <TextBlock FontSize="14"
@@ -960,7 +1112,7 @@
                                     </Grid.ColumnDefinitions>
                                     <TextBox Text="{Binding NewSessionWorkingDirectory, UpdateSourceTrigger=PropertyChanged}" />
                                     <Button Grid.Column="2"
-                                            Width="184"
+                                            MinWidth="168"
                                             Click="UseSelectedSessionDirectoryButton_Click"
                                             IsEnabled="{Binding CanUseSelectedSessionDirectory}"
                                             Content="{Binding Strings[NewSessionUseSelectedDirectory]}" />
@@ -1130,7 +1282,9 @@
                     <Border Grid.Column="2"
                             Background="#16212B"
                             CornerRadius="28"
-                            Padding="20">
+                            Padding="20"
+                            BorderBrush="#274452"
+                            BorderThickness="1">
                         <ScrollViewer VerticalScrollBarVisibility="Auto"
                                       HorizontalScrollBarVisibility="Disabled">
                             <StackPanel Margin="0,0,6,0">
@@ -1138,6 +1292,11 @@
                                            FontWeight="Bold"
                                            Foreground="#FFFDF9"
                                            Text="{Binding Strings[NewSessionPreviewTitle]}" />
+                                <Button Margin="0,10,0,0"
+                                        HorizontalAlignment="Left"
+                                        Style="{StaticResource ActionButtonStyle}"
+                                        Click="CopyNewSessionPreviewCommandButton_Click"
+                                        Content="{Binding Strings[CopyCommandPreview]}" />
                                 <TextBox Margin="0,12,0,0"
                                          MinHeight="150"
                                          IsReadOnly="True"
@@ -1240,7 +1399,8 @@
                 </Grid>
             </Grid>
 
-            <Grid Visibility="{Binding SetupSectionVisibility}">
+            <Grid Visibility="{Binding ExtensionsSectionVisibility}"
+                  DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="16" />
@@ -1249,7 +1409,262 @@
 
                 <Border Grid.Row="0"
                         Padding="18"
-                        CornerRadius="24">
+                        CornerRadius="24"
+                        BorderBrush="#355465"
+                        BorderThickness="1">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#132734" Offset="0" />
+                            <GradientStop Color="#274552" Offset="0.65" />
+                            <GradientStop Color="#D97732" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+
+                    <StackPanel>
+                        <TextBlock FontSize="24"
+                                   FontWeight="Bold"
+                                   Foreground="#FFFDF9"
+                                   Text="{Binding Strings[ExtensionsTitle]}" />
+                        <TextBlock Margin="0,6,0,0"
+                                   FontSize="12"
+                                   Foreground="#F8E7D6"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding Strings[ExtensionsSubtitle]}" />
+                    </StackPanel>
+                </Border>
+
+                <Grid Grid.Row="2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="{Binding SectionRailGapColumnWidth}" />
+                        <ColumnDefinition Width="{Binding SettingsAsideColumnWidth}" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Background="#FFFDF9"
+                            CornerRadius="28"
+                            Padding="20"
+                            BorderBrush="#E7DBCC"
+                            BorderThickness="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock FontSize="20"
+                                           FontWeight="Bold"
+                                           Foreground="#16212B"
+                                           Text="{Binding Strings[ExtensionsLibraryTitle]}" />
+                                <TextBlock Margin="0,8,0,0"
+                                           Foreground="#475467"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding Strings[ExtensionsLibrarySubtitle]}" />
+
+                                <Border Margin="0,16,0,16"
+                                        Padding="14"
+                                        CornerRadius="18"
+                                        Background="#F7F3EC">
+                                    <TextBlock Foreground="#475467"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding Strings[ExtensionsGuideText]}" />
+                                </Border>
+
+                                <DataGrid MinHeight="360"
+                                          ItemsSource="{Binding AiExtensions}"
+                                          SelectedItem="{Binding SelectedExtension, Mode=TwoWay}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          IsReadOnly="True">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Width="*"
+                                                            Binding="{Binding Name}"
+                                                            Header="{Binding Data.Strings[ExtensionsGridName], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="86"
+                                                            Binding="{Binding KindLabel}"
+                                                            Header="{Binding Data.Strings[ExtensionsGridType], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="96"
+                                                            Binding="{Binding SourceDisplayLabel}"
+                                                            Header="{Binding Data.Strings[ExtensionsGridSource], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="132"
+                                                            Binding="{Binding InstallStateLabel}"
+                                                            Header="{Binding Data.Strings[ExtensionsGridStatus], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="230"
+                                                            Binding="{Binding CommandOrUri}"
+                                                            Header="{Binding Data.Strings[ExtensionsGridCommand], Source={StaticResource ViewModelProxy}}" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+
+                    <Border Grid.Column="2"
+                            Background="#16212B"
+                            CornerRadius="28"
+                            Padding="18"
+                            BorderBrush="#274452"
+                            BorderThickness="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock FontSize="20"
+                                           FontWeight="Bold"
+                                           Foreground="#FFFDF9"
+                                           Text="{Binding Strings[ExtensionsDetailsTitle]}" />
+                                <TextBlock Margin="0,10,0,0"
+                                           Foreground="#C3D2DC"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SelectedExtensionDetailsText}" />
+
+                                <Border Margin="0,18,0,0"
+                                        Padding="16"
+                                        CornerRadius="22"
+                                        Background="#203543">
+                                    <StackPanel>
+                                        <TextBlock FontSize="17"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsManageTitle]}" />
+                                        <TextBlock Margin="0,8,0,0"
+                                                   Foreground="#C3D2DC"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding Strings[ExtensionsManageSubtitle]}" />
+
+                                        <UniformGrid Margin="0,16,0,0"
+                                                     Columns="2"
+                                                     Rows="2">
+                                            <Button Margin="0,0,8,8"
+                                                    Click="InstallSelectedExtensionButton_Click"
+                                                    IsEnabled="{Binding CanInstallSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsInstallButton]}" />
+                                            <Button Margin="0,0,0,8"
+                                                    Click="EnableSelectedExtensionButton_Click"
+                                                    IsEnabled="{Binding CanEnableSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsEnableButton]}" />
+                                            <Button Margin="0,0,8,0"
+                                                    Click="DisableSelectedExtensionButton_Click"
+                                                    IsEnabled="{Binding CanDisableSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsDisableButton]}" />
+                                            <Button Margin="0"
+                                                    Click="RemoveSelectedExtensionButton_Click"
+                                                    IsEnabled="{Binding CanRemoveSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsRemoveButton]}" />
+                                        </UniformGrid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,18,0,0"
+                                        Padding="16"
+                                        CornerRadius="22"
+                                        Background="#203543">
+                                    <StackPanel>
+                                        <TextBlock FontSize="17"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsEditorTitle]}" />
+                                        <TextBlock Margin="0,8,0,0"
+                                                   Foreground="#C3D2DC"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding Strings[ExtensionsEditorSubtitle]}" />
+
+                                        <TextBlock Margin="0,14,0,0"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsNameLabel]}" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding ExtensionName, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Margin="0,12,0,0"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsTypeLabel]}" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  ItemsSource="{Binding ExtensionKindOptions}"
+                                                  DisplayMemberPath="DisplayName"
+                                                  SelectedValuePath="Value"
+                                                  SelectedValue="{Binding SelectedExtensionKind, Mode=TwoWay}" />
+
+                                        <TextBlock Margin="0,12,0,0"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsCommandLabel]}" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding ExtensionCommandOrUri, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Margin="0,12,0,0"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsDescriptionLabel]}" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 MinHeight="78"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Text="{Binding ExtensionDescription, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <CheckBox Margin="0,12,0,0"
+                                                  Foreground="#FFFDF9"
+                                                  IsChecked="{Binding ExtensionIsEnabled}"
+                                                  Content="{Binding Strings[ExtensionsEnabledLabel]}" />
+
+                                        <UniformGrid Margin="0,16,0,0"
+                                                     Columns="2"
+                                                     Rows="2">
+                                            <Button Margin="0,0,8,8"
+                                                    Click="AddExtensionButton_Click"
+                                                    IsEnabled="{Binding CanSaveSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsAddButton]}" />
+                                            <Button Margin="0,0,0,8"
+                                                    Click="SaveSelectedExtensionButton_Click"
+                                                    IsEnabled="{Binding CanSaveSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsSaveButton]}" />
+                                            <Button Margin="0,0,8,0"
+                                                    Click="DuplicateExtensionButton_Click"
+                                                    Content="{Binding Strings[ExtensionsDuplicateButton]}" />
+                                            <Button Margin="0"
+                                                    Click="DeleteSelectedExtensionButton_Click"
+                                                    IsEnabled="{Binding CanDeleteSelectedExtension}"
+                                                    Content="{Binding Strings[ExtensionsDeleteButton]}" />
+                                        </UniformGrid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,16,0,0"
+                                        Padding="14"
+                                        CornerRadius="18"
+                                        Background="#203543">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="Bold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsStorageTitle]}" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   Foreground="#C3D2DC"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding ExtensionsStoragePath}" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Margin="0,16,0,0"
+                                        Padding="14"
+                                        CornerRadius="18"
+                                        Background="#203240">
+                                    <TextBlock Foreground="{Binding ExtensionStatusForeground}"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding ExtensionStatusText}" />
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <Grid Visibility="{Binding SetupSectionVisibility}"
+                  DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="16" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0"
+                        Padding="18"
+                        CornerRadius="24"
+                        BorderBrush="#355465"
+                        BorderThickness="1">
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                             <GradientStop Color="#132734" Offset="0" />
@@ -1274,8 +1689,8 @@
                 <Grid Grid.Row="2">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="16" />
-                        <ColumnDefinition Width="370" />
+                        <ColumnDefinition Width="{Binding SectionRailGapColumnWidth}" />
+                        <ColumnDefinition Width="{Binding SettingsAsideColumnWidth}" />
                     </Grid.ColumnDefinitions>
 
                     <Border Background="#FFFDF9"
@@ -1284,40 +1699,139 @@
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="12" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="14" />
+                                <RowDefinition Height="10" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
 
-                            <TextBlock FontSize="18"
-                                       FontWeight="Bold"
-                                       Foreground="#16212B"
-                                       Text="{Binding Strings[SetupEnvironmentTitle]}" />
-                            <TextBlock Grid.Row="2"
-                                       Foreground="#475467"
-                                       TextWrapping="Wrap"
-                                       Text="{Binding Strings[SetupEnvironmentSubtitle]}" />
+                            <Border Padding="10"
+                                    CornerRadius="18"
+                                    Background="#F7F3EC">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="8" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="6" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
 
-                            <ScrollViewer Grid.Row="4"
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="12" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{Binding SetupStatusForeground}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Text="{Binding SetupStatusText}" />
+                                        <TextBlock Grid.Column="2"
+                                                   FontSize="12"
+                                                   Foreground="#475467"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Text="{Binding SetupRecommendedNextStepText}" />
+                                    </Grid>
+
+                                    <ProgressBar Grid.Row="2"
+                                                 Height="4"
+                                                 IsIndeterminate="True"
+                                                 Visibility="{Binding IsSetupBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+
+                                    <Grid Grid.Row="4">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="8" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="8" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <Button Grid.Column="0"
+                                                Style="{StaticResource SetupSectionToggleButtonStyle}"
+                                                Click="OpenSetupCoreSectionButton_Click">
+                                            <Border Padding="10,8"
+                                                    CornerRadius="14"
+                                                    Background="{Binding SetupCoreSummaryBrush}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock FontSize="12"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FFFDF9"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Text="{Binding Strings[SetupCoreSectionTitle]}" />
+                                                    <TextBlock Grid.Column="1"
+                                                               Margin="8,0,0,0"
+                                                               FontSize="13"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FFFDF9"
+                                                               Text="{Binding SetupCoreProgressText}" />
+                                                </Grid>
+                                            </Border>
+                                        </Button>
+
+                                        <Button Grid.Column="2"
+                                                Style="{StaticResource SetupSectionToggleButtonStyle}"
+                                                Click="OpenSetupCodexSectionButton_Click">
+                                            <Border Padding="10,8"
+                                                    CornerRadius="14"
+                                                    Background="{Binding SetupCodexSummaryBrush}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock FontSize="12"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FFFDF9"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Text="{Binding Strings[SetupCodexSectionTitle]}" />
+                                                    <TextBlock Grid.Column="1"
+                                                               Margin="8,0,0,0"
+                                                               FontSize="13"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FFFDF9"
+                                                               Text="{Binding SetupCodexProgressText}" />
+                                                </Grid>
+                                            </Border>
+                                        </Button>
+
+                                        <Button Grid.Column="4"
+                                                Style="{StaticResource SetupSectionToggleButtonStyle}"
+                                                Click="OpenSetupLocalAiSectionButton_Click">
+                                            <Border Padding="10,8"
+                                                    CornerRadius="14"
+                                                    Background="{Binding SetupLocalAiSummaryBrush}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock FontSize="12"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FFFDF9"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Text="{Binding Strings[SetupLocalAiSectionTitle]}" />
+                                                    <TextBlock Grid.Column="1"
+                                                               Margin="8,0,0,0"
+                                                               FontSize="13"
+                                                               FontWeight="Bold"
+                                                               Foreground="#FFFDF9"
+                                                               Text="{Binding SetupLocalAiProgressText}" />
+                                                </Grid>
+                                            </Border>
+                                        </Button>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <ScrollViewer Grid.Row="2"
                                           VerticalScrollBarVisibility="Auto">
                                 <StackPanel>
-                                    <Border Margin="0,0,0,10"
-                                            Padding="16"
-                                            CornerRadius="20"
-                                            Background="#ECDED0">
-                                        <StackPanel>
-                                            <TextBlock FontSize="16"
-                                                       FontWeight="Bold"
-                                                       Foreground="#16212B"
-                                                       Text="{Binding Strings[SetupStartHereTitle]}" />
-                                            <TextBlock Margin="0,8,0,0"
-                                                       Foreground="#475467"
-                                                       TextWrapping="Wrap"
-                                                       Text="{Binding Strings[SetupStartHereText]}" />
-                                        </StackPanel>
-                                    </Border>
-
                                     <Border Padding="16"
                                             CornerRadius="20"
                                             Background="#F7F3EC">
@@ -1329,7 +1843,8 @@
                                                         <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="46" />
                                                     </Grid.ColumnDefinitions>
-                                                    <StackPanel Margin="0,0,14,0">
+
+                                                    <StackPanel>
                                                         <TextBlock FontSize="17"
                                                                    FontWeight="Bold"
                                                                    Foreground="#16212B"
@@ -1376,38 +1891,34 @@
 
                                                             <Button Grid.Row="0"
                                                                     Grid.Column="0"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="RefreshSetupStatusButton_Click"
                                                                     Content="{Binding Strings[SetupRefreshButton]}" />
                                                             <Button Grid.Row="0"
                                                                     Grid.Column="2"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="InstallBaseComponentsButton_Click"
                                                                     IsEnabled="{Binding CanInstallBaseComponents}"
                                                                     Content="{Binding Strings[SetupInstallBaseComponentsButton]}" />
                                                             <Button Grid.Row="2"
                                                                     Grid.Column="0"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="RepairWingetButton_Click"
                                                                     IsEnabled="{Binding CanRepairWinget}"
                                                                     Content="{Binding Strings[SetupRepairWingetButton]}" />
                                                             <Button Grid.Row="2"
                                                                     Grid.Column="2"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="InstallNodeButton_Click"
                                                                     IsEnabled="{Binding CanInstallBaseComponents}"
                                                                     Content="{Binding Strings[SetupInstallNodeButton]}" />
                                                         </Grid>
 
                                                         <Button Margin="0,10,0,0"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="InstallGitButton_Click"
                                                                 IsEnabled="{Binding CanInstallBaseComponents}"
                                                                 Content="{Binding Strings[SetupInstallGitButton]}" />
-
-                                                        <ProgressBar Margin="0,16,0,0"
-                                                                     Height="8"
-                                                                     IsIndeterminate="True"
-                                                                     Visibility="{Binding IsSetupBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                        <TextBlock Margin="0,12,0,0"
-                                                                   Foreground="{Binding SetupStatusForeground}"
-                                                                   TextWrapping="Wrap"
-                                                                   Text="{Binding SetupStatusText}" />
 
                                                         <Border Margin="0,16,0,0"
                                                                 Padding="12"
@@ -1495,28 +2006,34 @@
 
                                                             <Button Grid.Row="0"
                                                                     Grid.Column="0"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="InstallCodexDesktopAppButton_Click"
                                                                     IsEnabled="{Binding CanInstallCodexDesktopApp}"
                                                                     Content="{Binding Strings[SetupInstallCodexDesktopButton]}" />
                                                             <Button Grid.Row="0"
                                                                     Grid.Column="2"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="InstallCodexStackButton_Click"
                                                                     Content="{Binding Strings[SetupInstallStackButton]}" />
                                                             <Button Grid.Row="2"
                                                                     Grid.Column="0"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="LaunchCodexLoginButton_Click"
                                                                     IsEnabled="{Binding CanLaunchCodexLogin}"
                                                                     Content="{Binding Strings[SetupLoginButton]}" />
                                                             <Button Grid.Row="2"
                                                                     Grid.Column="2"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="OpenCodexHomeButton_Click"
                                                                     Content="{Binding Strings[SetupOpenCodexHome]}" />
                                                             <Button Grid.Row="4"
                                                                     Grid.Column="0"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="OpenSessionsFolderButton_Click"
                                                                     Content="{Binding Strings[OpenSessionsFolder]}" />
                                                             <Button Grid.Row="4"
                                                                     Grid.Column="2"
+                                                                    Style="{StaticResource SetupActionButtonStyle}"
                                                                     Click="OpenCodexDesktopStorePageButton_Click"
                                                                     IsEnabled="{Binding CanOpenCodexDesktopStorePage}"
                                                                     Content="{Binding Strings[SetupOpenCodexDesktopStoreButton]}" />
@@ -1535,6 +2052,66 @@
                                                                            Foreground="#475467"
                                                                            TextWrapping="Wrap"
                                                                            Text="{Binding Strings[SetupInstallNote]}" />
+                                                            </StackPanel>
+                                                        </Border>
+
+                                                        <Border Margin="0,12,0,0"
+                                                                Padding="14"
+                                                                CornerRadius="18"
+                                                                Background="#F7F3EC">
+                                                            <StackPanel>
+                                                                <TextBlock FontSize="14"
+                                                                           FontWeight="Bold"
+                                                                           Foreground="#16212B"
+                                                                           Text="{Binding Strings[SetupOpenCodeTitle]}" />
+                                                                <TextBlock Margin="0,6,0,0"
+                                                                           Foreground="#475467"
+                                                                           TextWrapping="Wrap"
+                                                                           Text="{Binding Strings[SetupOpenCodeSubtitle]}" />
+                                                                <Border Margin="0,12,0,0"
+                                                                        Padding="12"
+                                                                        CornerRadius="16"
+                                                                        Background="#16212B">
+                                                                    <TextBlock Foreground="#E9EEF2"
+                                                                               TextWrapping="Wrap"
+                                                                               Text="{Binding OpenCodeSetupDetailText}" />
+                                                                </Border>
+                                                                <Grid Margin="0,12,0,0">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="10" />
+                                                                        <ColumnDefinition Width="*" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <Grid.RowDefinitions>
+                                                                        <RowDefinition Height="Auto" />
+                                                                        <RowDefinition Height="10" />
+                                                                        <RowDefinition Height="Auto" />
+                                                                    </Grid.RowDefinitions>
+
+                                                                    <Button Grid.Row="0"
+                                                                            Grid.Column="0"
+                                                                            Style="{StaticResource SetupActionButtonStyle}"
+                                                                            Click="InstallOpenCodeButton_Click"
+                                                                            IsEnabled="{Binding CanInstallOpenCode}"
+                                                                            Content="{Binding Strings[SetupInstallOpenCodeButton]}" />
+                                                                    <Button Grid.Row="0"
+                                                                            Grid.Column="2"
+                                                                            Style="{StaticResource SetupActionButtonStyle}"
+                                                                            Click="LaunchOpenCodeButton_Click"
+                                                                            IsEnabled="{Binding CanLaunchOpenCode}"
+                                                                            Content="{Binding Strings[SetupLaunchOpenCodeButton]}" />
+                                                                    <Button Grid.Row="2"
+                                                                            Grid.Column="0"
+                                                                            Style="{StaticResource SetupDangerActionButtonStyle}"
+                                                                            Click="UninstallOpenCodeButton_Click"
+                                                                            IsEnabled="{Binding CanUninstallOpenCode}"
+                                                                            Content="{Binding Strings[SetupRemoveOpenCodeButton]}" />
+                                                                    <Button Grid.Row="2"
+                                                                            Grid.Column="2"
+                                                                            Style="{StaticResource SetupActionButtonStyle}"
+                                                                            Click="OpenOpenCodeDocsButton_Click"
+                                                                            Content="{Binding Strings[SetupOpenCodeDocsButton]}" />
+                                                                </Grid>
                                                             </StackPanel>
                                                         </Border>
                                                     </StackPanel>
@@ -1601,21 +2178,25 @@
 
                                                 <Button Grid.Row="0"
                                                         Grid.Column="0"
+                                                        Style="{StaticResource SetupActionButtonStyle}"
                                                         Click="InstallOllamaButton_Click"
                                                         IsEnabled="{Binding CanInstallLocalAiTools}"
                                                         Content="{Binding Strings[SetupInstallOllamaButton]}" />
                                                 <Button Grid.Row="0"
                                                         Grid.Column="2"
+                                                        Style="{StaticResource SetupActionButtonStyle}"
                                                         Click="InstallLmStudioButton_Click"
                                                         IsEnabled="{Binding CanInstallLocalAiTools}"
                                                         Content="{Binding Strings[SetupInstallLmStudioButton]}" />
                                                 <Button Grid.Row="2"
                                                         Grid.Column="0"
+                                                        Style="{StaticResource SetupDangerActionButtonStyle}"
                                                         Click="UninstallOllamaButton_Click"
                                                         IsEnabled="{Binding CanUninstallOllama}"
                                                         Content="{Binding Strings[SetupUninstallOllamaButton]}" />
                                                 <Button Grid.Row="2"
                                                         Grid.Column="2"
+                                                        Style="{StaticResource SetupDangerActionButtonStyle}"
                                                         Click="UninstallLmStudioButton_Click"
                                                         IsEnabled="{Binding CanUninstallLmStudio}"
                                                         Content="{Binding Strings[SetupUninstallLmStudioButton]}" />
@@ -1658,21 +2239,25 @@
 
                                                         <Button Grid.Row="0"
                                                                 Grid.Column="0"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="LaunchOllamaAppButton_Click"
                                                                 IsEnabled="{Binding CanLaunchOllamaApp}"
                                                                 Content="{Binding Strings[SetupOllamaLaunchAppButton]}" />
                                                         <Button Grid.Row="0"
                                                                 Grid.Column="2"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="StartOllamaServerButton_Click"
                                                                 IsEnabled="{Binding CanStartOllamaServer}"
                                                                 Content="{Binding Strings[SetupOllamaStartServerButton]}" />
                                                         <Button Grid.Row="2"
                                                                 Grid.Column="0"
+                                                                Style="{StaticResource SetupDangerActionButtonStyle}"
                                                                 Click="StopOllamaProcessesButton_Click"
                                                                 IsEnabled="{Binding CanStopOllamaProcesses}"
                                                                 Content="{Binding Strings[SetupOllamaStopButton]}" />
                                                         <Button Grid.Row="2"
                                                                 Grid.Column="2"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="InstallStarterOllamaModelButton_Click"
                                                                 IsEnabled="{Binding CanInstallStarterOllamaModel}"
                                                                 Content="{Binding Strings[SetupOllamaStarterModelButton]}" />
@@ -1869,14 +2454,14 @@
                                                                     </Grid.ColumnDefinitions>
 
                                                                     <Button Grid.Column="0"
+                                                                            Style="{StaticResource SetupActionButtonStyle}"
                                                                             Click="InstallCreativeAiToolButton_Click"
                                                                             IsEnabled="{Binding Data.CanManageCreativeAiTools, Source={StaticResource ViewModelProxy}}"
                                                                             Content="{Binding Data.Strings[SetupInstallCreativeToolButton], Source={StaticResource ViewModelProxy}}" />
                                                                     <Button Grid.Column="2"
+                                                                            Style="{StaticResource SetupDangerActionButtonStyle}"
                                                                             Click="RemoveCreativeAiToolButton_Click"
                                                                             IsEnabled="{Binding IsInstalled}"
-                                                                            Background="#B42318"
-                                                                            BorderBrush="#B42318"
                                                                             Content="{Binding Data.Strings[SetupRemoveCreativeToolButton], Source={StaticResource ViewModelProxy}}" />
                                                                 </Grid>
                                                             </StackPanel>
@@ -1973,14 +2558,14 @@
                                                                     </Grid.ColumnDefinitions>
 
                                                                     <Button Grid.Column="0"
+                                                                            Style="{StaticResource SetupActionButtonStyle}"
                                                                             Click="InstallAiAgentButton_Click"
                                                                             IsEnabled="{Binding Data.CanManageAiAgents, Source={StaticResource ViewModelProxy}}"
                                                                             Content="{Binding Data.Strings[SetupInstallAiAgentButton], Source={StaticResource ViewModelProxy}}" />
                                                                     <Button Grid.Column="2"
+                                                                            Style="{StaticResource SetupDangerActionButtonStyle}"
                                                                             Click="RemoveAiAgentButton_Click"
                                                                             IsEnabled="{Binding IsInstalled}"
-                                                                            Background="#B42318"
-                                                                            BorderBrush="#B42318"
                                                                             Content="{Binding Data.Strings[SetupRemoveAiAgentButton], Source={StaticResource ViewModelProxy}}" />
                                                                 </Grid>
                                                             </StackPanel>
@@ -2015,14 +2600,17 @@
                                                                ItemHeight="40"
                                                                ItemWidth="196">
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="ApplyOpenClawQuickModeButton_Click"
                                                                 IsEnabled="{Binding CanApplyOpenClawModes}"
                                                                 Content="{Binding Strings[SetupOpenClawApplyQuickButton]}" />
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="ApplyOpenClawAdvancedModeButton_Click"
                                                                 IsEnabled="{Binding CanApplyOpenClawModes}"
                                                                 Content="{Binding Strings[SetupOpenClawApplyAdvancedButton]}" />
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="PrepareOpenClawAlmostFullModeButton_Click"
                                                                 IsEnabled="{Binding CanApplyOpenClawModes}"
                                                                 Content="{Binding Strings[SetupOpenClawApplyAlmostFullButton]}" />
@@ -2087,22 +2675,27 @@
                                                                ItemHeight="40"
                                                                ItemWidth="196">
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="OpenClawStatusButton_Click"
                                                                 IsEnabled="{Binding CanInspectOpenClawStatus}"
                                                                 Content="{Binding Strings[SetupOpenClawStatusButton]}" />
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="OpenClawConfigButton_Click"
                                                                 IsEnabled="{Binding CanOpenOpenClawConfig}"
                                                                 Content="{Binding Strings[SetupOpenClawConfigButton]}" />
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="InstallOpenClawNodeButton_Click"
                                                                 IsEnabled="{Binding CanInstallOpenClawNode}"
                                                                 Content="{Binding Strings[SetupOpenClawNodeInstallButton]}" />
                                                         <Button Margin="0,0,10,10"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="OpenClawNodeStatusButton_Click"
                                                                 IsEnabled="{Binding CanInspectOpenClawNode}"
                                                                 Content="{Binding Strings[SetupOpenClawNodeStatusButton]}" />
                                                         <Button Margin="0,0,10,0"
+                                                                Style="{StaticResource SetupActionButtonStyle}"
                                                                 Click="OpenClawBrowserStatusButton_Click"
                                                                 IsEnabled="{Binding CanInspectOpenClawBrowser}"
                                                                 Content="{Binding Strings[SetupOpenClawBrowserStatusButton]}" />
@@ -2321,13 +2914,30 @@
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
+
+                                <Border Margin="0,14,0,0"
+                                        Padding="16"
+                                        CornerRadius="22"
+                                        Background="#203543">
+                                    <StackPanel>
+                                        <TextBlock FontSize="16"
+                                                   FontWeight="Bold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[SetupStartHereTitle]}" />
+                                        <TextBlock Margin="0,8,0,0"
+                                                   Foreground="#C3D2DC"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding Strings[SetupStartHereText]}" />
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
                     </Border>
                 </Grid>
             </Grid>
 
-            <Grid Visibility="{Binding SettingsSectionVisibility}">
+            <Grid Visibility="{Binding SettingsSectionVisibility}"
+                  DataContext="{Binding Data, Source={StaticResource ViewModelProxy}}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="16" />
@@ -2336,7 +2946,9 @@
 
                 <Border Grid.Row="0"
                         Padding="18"
-                        CornerRadius="24">
+                        CornerRadius="24"
+                        BorderBrush="#355465"
+                        BorderThickness="1">
                     <Border.Background>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                             <GradientStop Color="#132734" Offset="0" />
@@ -2376,13 +2988,15 @@
                 <Grid Grid.Row="2">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="16" />
-                        <ColumnDefinition Width="370" />
+                        <ColumnDefinition Width="{Binding SectionRailGapColumnWidth}" />
+                        <ColumnDefinition Width="{Binding SettingsAsideColumnWidth}" />
                     </Grid.ColumnDefinitions>
 
                     <Border Background="#FFFDF9"
                             CornerRadius="28"
-                            Padding="20">
+                            Padding="20"
+                            BorderBrush="#E7DBCC"
+                            BorderThickness="1">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <Grid>
                                 <StackPanel Visibility="{Binding NeuralSettingsTabVisibility}">
@@ -2422,7 +3036,17 @@
                                             CornerRadius="22"
                                             Background="#F7F3EC">
                                         <StackPanel>
+                                            <Border HorizontalAlignment="Left"
+                                                    Padding="10,4"
+                                                    CornerRadius="12"
+                                                    Background="#FCE7C3">
+                                                <TextBlock FontSize="11"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="#B86E10"
+                                                           Text="{Binding Strings[SettingsExperimentalBadge]}" />
+                                            </Border>
                                             <TextBlock FontSize="16"
+                                                       Margin="0,10,0,0"
                                                        FontWeight="Bold"
                                                        Foreground="#16212B"
                                                        Text="{Binding Strings[SettingsPhotoPasteFixTitle]}" />
@@ -2430,6 +3054,15 @@
                                                        Foreground="#475467"
                                                        TextWrapping="Wrap"
                                                        Text="{Binding Strings[SettingsPhotoPasteFixHelp]}" />
+                                            <Border Margin="0,12,0,0"
+                                                    Padding="12"
+                                                    CornerRadius="16"
+                                                    Background="{Binding SettingsPhotoPasteFixStateBrush}">
+                                                <TextBlock Foreground="{Binding SettingsPhotoPasteFixStateForeground}"
+                                                           FontWeight="SemiBold"
+                                                           TextWrapping="Wrap"
+                                                           Text="{Binding SettingsPhotoPasteFixStateText}" />
+                                            </Border>
                                             <CheckBox Margin="0,14,0,0"
                                                       IsChecked="{Binding SettingsPhotoPasteFixEnabled, Mode=TwoWay}"
                                                       Content="{Binding Strings[SettingsPhotoPasteFixToggle]}" />
@@ -2601,8 +3234,10 @@
                     </Border>
                 </Grid>
             </Grid>
+        </Grid>
     </Grid>
-</Grid>
+        </Border>
+    </Grid>
 </Window>
 
 

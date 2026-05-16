@@ -14,26 +14,45 @@ namespace LaptopSessionViewer;
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
+    private static readonly TimeSpan SearchDebounceInterval = TimeSpan.FromMilliseconds(220);
+    private static readonly TimeSpan SessionRefreshTimerInterval = TimeSpan.FromSeconds(25);
+    private static readonly TimeSpan SessionRefreshFallbackInterval = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan SetupRefreshNormalInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SetupRefreshBusyInterval = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan SetupRefreshFallbackInterval = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan SetupRefreshBoostDuration = TimeSpan.FromMinutes(3);
+    private static readonly TimeSpan UpdateRefreshCacheDuration = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan LayoutRefreshDebounceInterval = TimeSpan.FromMilliseconds(120);
     private readonly AppLogService _logService = new();
+    private readonly AiExtensionCatalogService _extensionCatalogService = new();
     private readonly CodexEnvironmentService _environmentService = new();
     private readonly AppUpdateService _updateService = new();
     private readonly CodexPhotoPasteFixService _photoPasteFixService;
     private readonly DnsManagementService _dnsManagementService = new();
     private readonly DnsPresetSettingsService _dnsPresetSettingsService = new();
+    private readonly OpenCodeSessionBridgeService _openCodeBridgeService;
+    private readonly OpenCodeSessionLinkService _openCodeLinkService = new();
     private readonly SessionFavoritesService _favoritesService = new();
     private readonly SessionNotesService _notesService = new();
     private readonly SessionService _sessionService = new();
     private readonly SessionViewerSettingsService _settingsService = new();
     private readonly DispatcherTimer _refreshTimer;
+    private readonly DispatcherTimer _searchDebounceTimer;
     private readonly DispatcherTimer _setupRefreshTimer;
+    private readonly DispatcherTimer _layoutRefreshTimer;
+    private FileSystemWatcher? _sessionFolderWatcher;
+    private FileSystemWatcher? _sessionIndexWatcher;
     private List<SessionRecord> _allSessions = [];
     private HashSet<string> _favoriteSessionIds = [];
+    private Dictionary<string, OpenCodeSessionLinkRecord> _openCodeLinks = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _sessionNotes = new(StringComparer.OrdinalIgnoreCase);
     private bool _autoRefreshEnabled = true;
     private bool _isLoading;
+    private bool _isOpenCodeBusy;
     private bool _isRefreshing;
     private bool _isDnsBusy;
     private bool _isApplyingDangerousAccessDefaults;
+    private bool _isSessionsSurfaceInitialized;
     private bool _isSetupBusy;
     private bool _isSetupCodexSectionExpanded;
     private bool _isSetupCoreSectionExpanded;
@@ -47,6 +66,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _dnsStatusForeground = "#F8E7D6";
     private string _dnsStatusText = string.Empty;
     private bool _dnsUseDoh;
+    private string _extensionCommandOrUri = string.Empty;
+    private string _extensionDescription = string.Empty;
+    private bool _extensionIsEnabled = true;
+    private string _extensionName = string.Empty;
+    private string _extensionStatusForeground = "#F8E7D6";
+    private string _extensionStatusText = string.Empty;
     private DateTime? _lastUpdatedAtLocal;
     private string _lastUpdatedText = string.Empty;
     private string _newSessionModel = string.Empty;
@@ -61,11 +86,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _primaryDnsServer = string.Empty;
     private DnsAdapterRecord? _selectedDnsAdapter;
     private DnsPreset? _selectedDnsPreset;
+    private AiExtensionItem? _selectedExtension;
+    private string _selectedExtensionKind = "Plugin";
     private string _selectedApprovalPolicy = "on-request";
     private AppSection _selectedAppSection = AppSection.Sessions;
     private string _searchText = string.Empty;
     private string _secondaryDnsServer = string.Empty;
     private string _selectedLocalProvider = string.Empty;
+    private string _selectedSessionTranscriptText = string.Empty;
     private string _selectedSandboxMode = "workspace-write";
     private SettingsCategoryTab _selectedSettingsCategoryTab = SettingsCategoryTab.NeuralSettings;
     private SessionListTab _selectedSessionListTab = SessionListTab.Sessions;
@@ -78,6 +106,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _settingsStatusText = string.Empty;
     private string _selectedSessionNote = string.Empty;
     private SessionRecord? _selectedSession;
+    private bool _sessionRefreshPending = true;
+    private int _selectedSessionTranscriptLoadVersion;
+    private bool _selectedSessionTranscriptLoading;
+    private bool _setupRefreshPending = true;
+    private DateTime _lastSessionRefreshCompletedUtc = DateTime.MinValue;
+    private DateTime _lastSetupRefreshCompletedUtc = DateTime.MinValue;
+    private DateTime _lastUpdateRefreshCompletedUtc = DateTime.MinValue;
+    private readonly Stopwatch _startupStopwatch = Stopwatch.StartNew();
+    private bool _isNewSessionSectionInitialized;
+    private bool _isExtensionsSectionInitialized;
+    private bool _isSetupSectionInitialized;
+    private bool _isSettingsSectionInitialized;
+    private bool _startupRefreshScheduled;
+    private DateTime _setupRefreshBoostUntilUtc = DateTime.MinValue;
     private string _setupStatusForeground = "#F8E7D6";
     private string _setupStatusText = string.Empty;
     private string _updateStatusForeground = "#F8E7D6";
@@ -95,55 +137,56 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public MainWindow()
     {
+        LogStartupPhase("MainWindow constructor started.");
         var initialSettings = _settingsService.LoadSettings();
+        LogStartupPhase("Settings loaded.");
         Strings.SetLanguage(initialSettings.Language);
         _settingsDangerousFullAccess = initialSettings.DefaultDangerousFullAccess;
         _settingsPhotoPasteFixEnabled = initialSettings.PhotoPasteFixEnabled;
         _selectedLanguageOption = LanguageOptions.First(option => option.Language == initialSettings.Language);
+        _openCodeBridgeService = new OpenCodeSessionBridgeService(_logService);
         _photoPasteFixService = new CodexPhotoPasteFixService(_logService);
-
-        try
-        {
-            _photoPasteFixService.UpdateConfiguration(_settingsPhotoPasteFixEnabled);
-        }
-        catch (Exception exception)
-        {
-            _settingsPhotoPasteFixEnabled = false;
-            _settingsService.SavePhotoPasteFixEnabled(false);
-            _logService.Error(nameof(MainWindow), "Failed to enable the photo paste fix on startup.", exception);
-        }
+        LoadSessionMetadata();
+        LoadOpenCodeLinks();
+        _selectedSessionTranscriptText = Strings["NoTranscriptLoaded"];
+        LogStartupPhase("Session metadata loaded.");
 
         InitializeComponent();
         DataContext = this;
-
-        RefreshLaunchOptionCollections();
-        RefreshLocalAiModelOptions();
-        RefreshCreativeAiToolOptions();
-        RefreshAiAgentToolOptions();
-        RefreshOpenClawSetupModes();
-        RefreshOpenClawCapabilityChecks();
-        LoadNewSessionConfigurationInfoSafe();
-        ApplyDangerousAccessDefaultsToNewSession();
-        LoadDnsPresetsSafe();
+        LogStartupPhase("InitializeComponent completed.");
         RefreshLocalizedChromeText();
         RefreshSectionChromeText();
+        LogStartupPhase("Initial chrome text refreshed.");
 
         _refreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(20)
+            Interval = SessionRefreshTimerInterval
+        };
+        _searchDebounceTimer = new DispatcherTimer
+        {
+            Interval = SearchDebounceInterval
         };
         _setupRefreshTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(30)
+            Interval = SetupRefreshNormalInterval
+        };
+        _layoutRefreshTimer = new DispatcherTimer
+        {
+            Interval = LayoutRefreshDebounceInterval
         };
 
         SourceInitialized += MainWindow_SourceInitialized;
         _refreshTimer.Tick += RefreshTimer_Tick;
+        _searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
         _setupRefreshTimer.Tick += SetupRefreshTimer_Tick;
+        _layoutRefreshTimer.Tick += LayoutRefreshTimer_Tick;
         Activated += MainWindow_Activated;
         Deactivated += MainWindow_Deactivated;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
+        SizeChanged += MainWindow_SizeChanged;
+        StateChanged += MainWindow_StateChanged;
+        LogStartupPhase("MainWindow constructor finished.");
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -171,6 +214,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<SetupCheckItem> OpenClawSetupModes { get; } = [];
 
     public ObservableCollection<SetupCheckItem> OpenClawCapabilityChecks { get; } = [];
+
+    public ObservableCollection<AiExtensionItem> AiExtensions { get; } = [];
+
+    public ObservableCollection<LaunchOption> ExtensionKindOptions { get; } = [];
 
     public ObservableCollection<LaunchOption> SandboxModeOptions { get; } = [];
 
@@ -252,6 +299,49 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<SessionRecord> Sessions { get; } = [];
 
+    public Thickness AppOuterMargin =>
+        IsWideWindowLayout ? new Thickness(16) : IsCompactWindowLayout ? new Thickness(10) : new Thickness(12);
+
+    public double AppContentMaxWidth => IsWideWindowLayout ? 1820 : 1720;
+
+    public double AppContentWidth
+    {
+        get
+        {
+            var measuredWidth = ActualWidth > 0 ? ActualWidth : Width;
+            var margin = AppOuterMargin;
+            var availableWidth = Math.Max(0, measuredWidth - margin.Left - margin.Right);
+            return Math.Min(AppContentMaxWidth, availableWidth);
+        }
+    }
+
+    public GridLength ShellSidebarColumnWidth =>
+        new(IsWideWindowLayout ? 204 : IsCompactWindowLayout ? 176 : 190);
+
+    public GridLength ShellMainGapColumnWidth =>
+        new(IsWideWindowLayout ? 16 : IsCompactWindowLayout ? 10 : 12);
+
+    public GridLength SectionRailGapColumnWidth =>
+        new(IsWideWindowLayout ? 18 : IsCompactWindowLayout ? 12 : 16);
+
+    public GridLength SessionsHeaderSearchColumnWidth =>
+        new(IsWideWindowLayout ? 320 : IsCompactWindowLayout ? 232 : 280);
+
+    public GridLength SessionsActionButtonColumnWidth =>
+        new(IsWideWindowLayout ? 164 : IsCompactWindowLayout ? 138 : 150);
+
+    public GridLength SessionsDetailColumnWidth =>
+        SharedAsideColumnWidth;
+
+    public GridLength NewSessionAsideColumnWidth =>
+        SharedAsideColumnWidth;
+
+    public GridLength SettingsAsideColumnWidth =>
+        SharedAsideColumnWidth;
+
+    private GridLength SharedAsideColumnWidth =>
+        new(IsWideWindowLayout ? 416 : IsCompactWindowLayout ? 336 : 370);
+
     public AppSection SelectedAppSection
     {
         get => _selectedAppSection;
@@ -259,16 +349,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _selectedAppSection, value))
             {
+                EnsureSectionDataInitialized(value);
                 OnPropertyChanged(nameof(SessionsSectionButtonBackground));
                 OnPropertyChanged(nameof(SessionsSectionButtonForeground));
                 OnPropertyChanged(nameof(NewSessionSectionButtonBackground));
                 OnPropertyChanged(nameof(NewSessionSectionButtonForeground));
+                OnPropertyChanged(nameof(ExtensionsSectionButtonBackground));
+                OnPropertyChanged(nameof(ExtensionsSectionButtonForeground));
                 OnPropertyChanged(nameof(SetupSectionButtonBackground));
                 OnPropertyChanged(nameof(SetupSectionButtonForeground));
                 OnPropertyChanged(nameof(SettingsSectionButtonBackground));
                 OnPropertyChanged(nameof(SettingsSectionButtonForeground));
                 OnPropertyChanged(nameof(SessionsSectionVisibility));
                 OnPropertyChanged(nameof(NewSessionSectionVisibility));
+                OnPropertyChanged(nameof(ExtensionsSectionVisibility));
                 OnPropertyChanged(nameof(SetupSectionVisibility));
                 OnPropertyChanged(nameof(SettingsSectionVisibility));
                 UpdateRefreshTimer();
@@ -279,13 +373,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
                 }
 
-                if (value == AppSection.Settings && IsLoaded && _lastAppUpdateSnapshot is null)
+                if (value == AppSection.Settings && IsLoaded)
                 {
                     _ = RefreshSettingsSectionAsync();
                 }
 
                 if (value == AppSection.Sessions && IsLoaded)
                 {
+                    EnsureSessionsSurfaceInitialized();
                     _ = RefreshSessionsAsync(isAutomaticRefresh: false);
                 }
             }
@@ -302,6 +397,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public string NewSessionSectionButtonForeground => "#FFFDF9";
 
+    public string ExtensionsSectionButtonBackground =>
+        SelectedAppSection == AppSection.Extensions ? "#D97732" : "#1D3545";
+
+    public string ExtensionsSectionButtonForeground => "#FFFDF9";
+
     public string SetupSectionButtonBackground =>
         SelectedAppSection == AppSection.Setup ? "#D97732" : "#1D3545";
 
@@ -315,14 +415,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public Visibility SessionsSectionVisibility =>
         SelectedAppSection == AppSection.Sessions ? Visibility.Visible : Visibility.Collapsed;
 
+    public object? SessionsMainContent => _isSessionsSurfaceInitialized ? true : null;
+
+    public Visibility SessionsMainPlaceholderVisibility =>
+        _isSessionsSurfaceInitialized ? Visibility.Collapsed : Visibility.Visible;
+
     public Visibility NewSessionSectionVisibility =>
         SelectedAppSection == AppSection.NewSession ? Visibility.Visible : Visibility.Collapsed;
+
+    public object? NewSessionSectionContent => _isNewSessionSectionInitialized ? true : null;
+
+    public Visibility ExtensionsSectionVisibility =>
+        SelectedAppSection == AppSection.Extensions ? Visibility.Visible : Visibility.Collapsed;
+
+    public object? ExtensionsSectionContent => _isExtensionsSectionInitialized ? true : null;
 
     public Visibility SetupSectionVisibility =>
         SelectedAppSection == AppSection.Setup ? Visibility.Visible : Visibility.Collapsed;
 
+    public object? SetupSectionContent => _isSetupSectionInitialized ? true : null;
+
     public Visibility SettingsSectionVisibility =>
         SelectedAppSection == AppSection.Settings ? Visibility.Visible : Visibility.Collapsed;
+
+    public object? SettingsSectionContent => _isSettingsSectionInitialized ? true : null;
 
     public SettingsCategoryTab SelectedSettingsCategoryTab
     {
@@ -422,6 +538,40 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         !string.IsNullOrWhiteSpace(SelectedSession.SessionId) &&
         File.Exists(_environmentService.CodexCommandPath);
 
+    public bool CanOpenSelectedSessionDirectory =>
+        SelectedSession is not null &&
+        !string.IsNullOrWhiteSpace(SelectedSession.WorkingDirectory) &&
+        SelectedSession.WorkingDirectory != "-" &&
+        Directory.Exists(SelectedSession.WorkingDirectory);
+
+    public bool IsOpenCodeBusy
+    {
+        get => _isOpenCodeBusy;
+        private set
+        {
+            if (SetField(ref _isOpenCodeBusy, value))
+            {
+                OnPropertyChanged(nameof(CanResumeSelectedSessionInOpenCode));
+                OnPropertyChanged(nameof(CanRefreshSelectedSessionOpenCodeBridge));
+            }
+        }
+    }
+
+    public bool CanResumeSelectedSessionInOpenCode =>
+        SelectedSession is not null &&
+        !IsOpenCodeBusy;
+
+    public bool CanRefreshSelectedSessionOpenCodeBridge =>
+        SelectedSession is not null &&
+        !IsOpenCodeBusy;
+
+    public string OpenCodeResumeButtonText =>
+        GetSelectedSessionOpenCodeLink() is null
+            ? Strings["CreateOpenCodeBridge"]
+            : Strings["ResumeInOpenCode"];
+
+    public string SelectedSessionOpenCodeBridgeText => BuildSelectedSessionOpenCodeBridgeText();
+
     public bool CanEditSelectedSessionNote => SelectedSession is not null;
 
     public bool CanSaveSelectedSessionNote =>
@@ -447,6 +597,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanOpenCodexDesktopStorePage => !IsSetupBusy;
 
     public bool CanLaunchCodexLogin => File.Exists(_environmentService.CodexCommandPath);
+
+    public bool CanInstallOpenCode =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.NpmAvailable == true;
+
+    public bool CanLaunchOpenCode =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenCodeAvailable == true;
+
+    public bool CanUninstallOpenCode =>
+        !IsSetupBusy &&
+        _lastEnvironmentSnapshot?.OpenCodeAvailable == true;
+
+    public string OpenCodeSetupDetailText =>
+        _lastEnvironmentSnapshot?.OpenCodeAvailable == true
+            ? _lastEnvironmentSnapshot.OpenCodeDetail
+            : Strings["SetupDetailOpenCodeMissing"];
 
     public bool CanInstallLocalAiTools => !IsSetupBusy;
 
@@ -646,6 +813,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanRepairWinget));
                 OnPropertyChanged(nameof(CanInstallCodexDesktopApp));
                 OnPropertyChanged(nameof(CanOpenCodexDesktopStorePage));
+                OnPropertyChanged(nameof(CanInstallOpenCode));
+                OnPropertyChanged(nameof(CanLaunchOpenCode));
+                OnPropertyChanged(nameof(CanUninstallOpenCode));
                 OnPropertyChanged(nameof(CanInstallLocalAiTools));
                 OnPropertyChanged(nameof(CanInstallLocalAiModels));
                 OnPropertyChanged(nameof(CanLaunchOllamaApp));
@@ -662,6 +832,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanOpenOpenClawConfig));
                 OnPropertyChanged(nameof(CanUninstallOllama));
                 OnPropertyChanged(nameof(CanUninstallLmStudio));
+                OnPropertyChanged(nameof(OpenCodeSetupDetailText));
             }
         }
     }
@@ -742,6 +913,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public Visibility SetupDnsSectionCollapsedIndicatorVisibility =>
         IsSetupDnsSectionExpanded ? Visibility.Collapsed : Visibility.Visible;
 
+    public string SetupLiveStatusHintText =>
+        IsSetupRefreshBoostActive
+            ? Strings["SetupLiveStatusBoostHint"]
+            : Strings["SetupLiveStatusHint"];
+
+    public string SetupRecommendedNextStepText =>
+        GetSetupRecommendedNextStepText(_lastEnvironmentSnapshot);
+
+    public string SetupCoreProgressText =>
+        GetSetupSectionProgressText(GetCoreReadyCount(_lastEnvironmentSnapshot), 4);
+
+    public string SetupCodexProgressText =>
+        GetSetupSectionProgressText(GetCodexReadyCount(_lastEnvironmentSnapshot), 5);
+
+    public string SetupLocalAiProgressText =>
+        GetSetupSectionProgressText(GetLocalAiReadyCount(_lastEnvironmentSnapshot), 4);
+
+    public string SetupCoreNextStepText =>
+        GetSetupCoreNextStepText(_lastEnvironmentSnapshot);
+
+    public string SetupCodexNextStepText =>
+        GetSetupCodexNextStepText(_lastEnvironmentSnapshot);
+
+    public string SetupLocalAiNextStepText =>
+        GetSetupLocalAiNextStepText(_lastEnvironmentSnapshot);
+
+    public string SetupCoreSummaryBrush =>
+        _lastEnvironmentSnapshot is null ? "#2D5366" : GetSetupSummaryBrush(GetCoreReadyCount(_lastEnvironmentSnapshot), 4);
+
+    public string SetupCodexSummaryBrush =>
+        _lastEnvironmentSnapshot is null ? "#2D5366" : GetSetupSummaryBrush(GetCodexReadyCount(_lastEnvironmentSnapshot), 4);
+
+    public string SetupLocalAiSummaryBrush =>
+        _lastEnvironmentSnapshot is null ? "#2D5366" : GetSetupSummaryBrush(GetLocalAiReadyCount(_lastEnvironmentSnapshot), 4);
+
     public bool IsUpdateBusy
     {
         get => _isUpdateBusy;
@@ -803,8 +1009,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool SettingsPhotoPasteFixEnabled
     {
         get => _settingsPhotoPasteFixEnabled;
-        set => SetField(ref _settingsPhotoPasteFixEnabled, value);
+        set
+        {
+            if (SetField(ref _settingsPhotoPasteFixEnabled, value))
+            {
+                OnPropertyChanged(nameof(SettingsPhotoPasteFixStateText));
+                OnPropertyChanged(nameof(SettingsPhotoPasteFixStateBrush));
+                OnPropertyChanged(nameof(SettingsPhotoPasteFixStateForeground));
+            }
+        }
     }
+
+    public string SettingsPhotoPasteFixStateText =>
+        SettingsPhotoPasteFixEnabled
+            ? Strings["SettingsPhotoPasteFixStateEnabled"]
+            : Strings["SettingsPhotoPasteFixStateDisabled"];
+
+    public string SettingsPhotoPasteFixStateBrush =>
+        SettingsPhotoPasteFixEnabled ? "#DDF5E8" : "#FFF1E6";
+
+    public string SettingsPhotoPasteFixStateForeground =>
+        SettingsPhotoPasteFixEnabled ? "#1F7A52" : "#B86E10";
 
     public string SettingsStatusText
     {
@@ -1008,7 +1233,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _searchText, value))
             {
-                ApplyFilter();
+                ScheduleSearchFilter();
             }
         }
     }
@@ -1027,6 +1252,109 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 ApplyLanguageChange(value.Language);
             }
+        }
+    }
+
+    public AiExtensionItem? SelectedExtension
+    {
+        get => _selectedExtension;
+        set
+        {
+            if (SetField(ref _selectedExtension, value))
+            {
+                PopulateExtensionEditor(value);
+                OnPropertyChanged(nameof(CanDeleteSelectedExtension));
+                OnPropertyChanged(nameof(CanInstallSelectedExtension));
+                OnPropertyChanged(nameof(CanEnableSelectedExtension));
+                OnPropertyChanged(nameof(CanDisableSelectedExtension));
+                OnPropertyChanged(nameof(CanRemoveSelectedExtension));
+                OnPropertyChanged(nameof(CanSaveSelectedExtension));
+                OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+            }
+        }
+    }
+
+    public string ExtensionName
+    {
+        get => _extensionName;
+        set
+        {
+            if (SetField(ref _extensionName, value))
+            {
+                OnPropertyChanged(nameof(CanSaveSelectedExtension));
+            }
+        }
+    }
+
+    public string SelectedExtensionKind
+    {
+        get => _selectedExtensionKind;
+        set => SetField(ref _selectedExtensionKind, value);
+    }
+
+    public string ExtensionCommandOrUri
+    {
+        get => _extensionCommandOrUri;
+        set => SetField(ref _extensionCommandOrUri, value);
+    }
+
+    public string ExtensionDescription
+    {
+        get => _extensionDescription;
+        set => SetField(ref _extensionDescription, value);
+    }
+
+    public bool ExtensionIsEnabled
+    {
+        get => _extensionIsEnabled;
+        set => SetField(ref _extensionIsEnabled, value);
+    }
+
+    public string ExtensionStatusText
+    {
+        get => _extensionStatusText;
+        private set => SetField(ref _extensionStatusText, value);
+    }
+
+    public string ExtensionStatusForeground
+    {
+        get => _extensionStatusForeground;
+        private set => SetField(ref _extensionStatusForeground, value);
+    }
+
+    public bool CanDeleteSelectedExtension => SelectedExtension?.IsCustom == true;
+
+    public bool CanInstallSelectedExtension => SelectedExtension is not null && !SelectedExtension.IsInstalled;
+
+    public bool CanEnableSelectedExtension => SelectedExtension is { IsInstalled: true, IsEnabled: false };
+
+    public bool CanDisableSelectedExtension => SelectedExtension is { IsInstalled: true, IsEnabled: true };
+
+    public bool CanRemoveSelectedExtension => SelectedExtension is not null && (SelectedExtension.IsInstalled || SelectedExtension.IsCustom);
+
+    public bool CanSaveSelectedExtension => !string.IsNullOrWhiteSpace(ExtensionName);
+
+    public string ExtensionsStoragePath => _extensionCatalogService.GetStoragePath();
+
+    public string SelectedExtensionDetailsText
+    {
+        get
+        {
+            if (SelectedExtension is null)
+            {
+                return Strings["ExtensionsNoSelection"];
+            }
+
+            return string.Join(
+                Environment.NewLine,
+                [
+                    Strings.Format("ExtensionsDetailName", SelectedExtension.Name),
+                    Strings.Format("ExtensionsDetailType", SelectedExtension.KindLabel),
+                    Strings.Format("ExtensionsDetailSource", SelectedExtension.SourceDisplayLabel),
+                    Strings.Format("ExtensionsDetailStatus", SelectedExtension.InstallStateLabel),
+                    Strings.Format("ExtensionsDetailCommand", SelectedExtension.CommandOrUri),
+                    SelectedExtension.Description
+                ]);
         }
     }
 
@@ -1056,14 +1384,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _selectedSession, value))
             {
                 SelectedSessionNote = value?.Note ?? string.Empty;
+                QueueSelectedSessionTranscriptLoad(value);
                 OnPropertyChanged(nameof(CanOpenSelectedFile));
+                OnPropertyChanged(nameof(CanOpenSelectedSessionDirectory));
                 OnPropertyChanged(nameof(CanDeleteSelectedSession));
                 OnPropertyChanged(nameof(CanResumeSelectedSession));
+                OnPropertyChanged(nameof(CanResumeSelectedSessionInOpenCode));
+                OnPropertyChanged(nameof(CanRefreshSelectedSessionOpenCodeBridge));
                 OnPropertyChanged(nameof(CanUseSelectedSessionDirectory));
                 OnPropertyChanged(nameof(CanEditSelectedSessionNote));
                 OnPropertyChanged(nameof(CanSaveSelectedSessionNote));
                 OnPropertyChanged(nameof(CanClearSelectedSessionNote));
                 OnPropertyChanged(nameof(FavoriteButtonText));
+                OnPropertyChanged(nameof(OpenCodeResumeButtonText));
+                OnPropertyChanged(nameof(SelectedSessionOpenCodeBridgeText));
                 OnPropertyChanged(nameof(SelectedSessionTitleText));
                 OnPropertyChanged(nameof(SelectedSessionPreviewText));
                 OnPropertyChanged(nameof(SelectedSessionTranscriptText));
@@ -1078,8 +1412,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string SelectedSessionPreviewText =>
         SelectedSession?.Preview ?? Strings["SelectSessionHint"];
 
-    public string SelectedSessionTranscriptText =>
-        SelectedSession?.TranscriptText ?? Strings["NoTranscriptLoaded"];
+    public string SelectedSessionTranscriptText
+    {
+        get => _selectedSessionTranscriptText;
+        private set => SetField(ref _selectedSessionTranscriptText, value);
+    }
+
+    public bool IsSelectedSessionTranscriptLoading
+    {
+        get => _selectedSessionTranscriptLoading;
+        private set => SetField(ref _selectedSessionTranscriptLoading, value);
+    }
 
     public string SelectedSessionFavoriteText =>
         SelectedSession is null ? "-" : SelectedSession.IsFavorite ? Strings["Yes"] : Strings["No"];
@@ -1126,15 +1469,37 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        LogStartupPhase("MainWindow loaded.");
         UpdateRefreshTimer();
         UpdateSetupRefreshTimer();
-        await RefreshSessionsAsync(isAutomaticRefresh: false);
-        await RefreshSetupSectionAsync(preserveDnsStatus: true);
+        EnsureSessionWatchersInitialized();
+
+        if (_startupRefreshScheduled)
+        {
+            return;
+        }
+
+        _startupRefreshScheduled = true;
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+        LogStartupPhase("First frame yielded to background.");
+        _ = RunInitialRefreshAsync();
+        _ = RunDeferredStartupInitializationAsync();
     }
 
     private void MainWindow_SourceInitialized(object? sender, EventArgs e)
     {
         FitToWorkArea();
+        RefreshAdaptiveLayoutBindings();
+    }
+
+    private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ScheduleAdaptiveLayoutRefresh();
+    }
+
+    private void MainWindow_StateChanged(object? sender, EventArgs e)
+    {
+        ScheduleAdaptiveLayoutRefresh();
     }
 
     private void MainWindow_Activated(object? sender, EventArgs e)
@@ -1151,6 +1516,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
         }
+        else if (IsLoaded && IsSetupRefreshBoostActive)
+        {
+            _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
+        }
+
+        if (IsLoaded && SelectedAppSection == AppSection.Settings)
+        {
+            _ = RefreshSettingsSectionAsync();
+        }
     }
 
     private void MainWindow_Deactivated(object? sender, EventArgs e)
@@ -1163,8 +1537,367 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         PersistSelectedSessionNote(showStatus: false, refreshFilter: false);
         _refreshTimer.Stop();
+        _searchDebounceTimer.Stop();
         _setupRefreshTimer.Stop();
+        _layoutRefreshTimer.Stop();
+        DisposeSessionWatchers();
         _photoPasteFixService.Dispose();
+    }
+
+    private async Task RunInitialRefreshAsync()
+    {
+        LogStartupPhase("Initial refresh started.");
+        await RefreshSessionsAsync(isAutomaticRefresh: false, forceRefresh: true);
+        LogStartupPhase("Initial sessions refresh finished.");
+        EnsureSessionsSurfaceInitialized();
+
+        if (SelectedAppSection == AppSection.Setup)
+        {
+            await RefreshSetupSectionAsync(preserveDnsStatus: true, forceRefresh: true);
+            LogStartupPhase("Initial setup refresh finished.");
+        }
+        else if (SelectedAppSection == AppSection.Settings && _lastAppUpdateSnapshot is null)
+        {
+            await RefreshSettingsSectionAsync(forceRefresh: true);
+            LogStartupPhase("Initial settings refresh finished.");
+        }
+    }
+
+    private async Task RunDeferredStartupInitializationAsync()
+    {
+        await Task.Delay(150);
+
+        try
+        {
+            await Task.Run(() => _photoPasteFixService.UpdateConfiguration(_settingsPhotoPasteFixEnabled));
+            LogStartupPhase("Photo paste fix configuration applied.");
+        }
+        catch (Exception exception)
+        {
+            _settingsPhotoPasteFixEnabled = false;
+            _settingsService.SavePhotoPasteFixEnabled(false);
+            _logService.Error(nameof(MainWindow), "Failed to enable the photo paste fix on deferred startup.", exception);
+        }
+    }
+
+    private void EnsureSectionDataInitialized(AppSection section)
+    {
+        switch (section)
+        {
+            case AppSection.NewSession when !_isNewSessionSectionInitialized:
+                _isNewSessionSectionInitialized = true;
+                OnPropertyChanged(nameof(NewSessionSectionContent));
+                RefreshLaunchOptionCollections();
+                LoadNewSessionConfigurationInfoSafe();
+                ApplyDangerousAccessDefaultsToNewSession();
+                LogStartupPhase("New Session section initialized.");
+                break;
+            case AppSection.Extensions when !_isExtensionsSectionInitialized:
+                _isExtensionsSectionInitialized = true;
+                OnPropertyChanged(nameof(ExtensionsSectionContent));
+                RefreshExtensionKindOptions();
+                LoadExtensionsSafe();
+                LogStartupPhase("Extensions section initialized.");
+                break;
+            case AppSection.Setup when !_isSetupSectionInitialized:
+                _isSetupSectionInitialized = true;
+                OnPropertyChanged(nameof(SetupSectionContent));
+                RefreshLocalAiModelOptions();
+                RefreshCreativeAiToolOptions();
+                RefreshAiAgentToolOptions();
+                RefreshOpenClawSetupModes();
+                RefreshOpenClawCapabilityChecks();
+                LoadDnsPresetsSafe();
+                LogStartupPhase("Setup section initialized.");
+                break;
+            case AppSection.Settings when !_isSettingsSectionInitialized:
+                _isSettingsSectionInitialized = true;
+                OnPropertyChanged(nameof(SettingsSectionContent));
+                LogStartupPhase("Settings section initialized.");
+                break;
+        }
+    }
+
+    private void EnsureSessionsSurfaceInitialized()
+    {
+        if (_isSessionsSurfaceInitialized)
+        {
+            return;
+        }
+
+        _isSessionsSurfaceInitialized = true;
+        OnPropertyChanged(nameof(SessionsMainContent));
+        OnPropertyChanged(nameof(SessionsMainPlaceholderVisibility));
+        LogStartupPhase("Sessions surface initialized.");
+    }
+
+    private void LogStartupPhase(string phase)
+    {
+        _logService.Info(nameof(MainWindow), $"Startup +{_startupStopwatch.ElapsedMilliseconds} ms: {phase}");
+    }
+
+    private void LoadSessionMetadata()
+    {
+        _favoriteSessionIds = _favoritesService.LoadFavorites();
+        _sessionNotes = _notesService.LoadNotes();
+    }
+
+    private void LoadOpenCodeLinks()
+    {
+        _openCodeLinks = _openCodeLinkService.LoadLinks();
+    }
+
+    private void ScheduleSearchFilter()
+    {
+        _searchDebounceTimer.Stop();
+        _searchDebounceTimer.Start();
+    }
+
+    private void QueueSelectedSessionTranscriptLoad(SessionRecord? session)
+    {
+        var loadVersion = ++_selectedSessionTranscriptLoadVersion;
+
+        if (session is null)
+        {
+            IsSelectedSessionTranscriptLoading = false;
+            SelectedSessionTranscriptText = Strings["NoTranscriptLoaded"];
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.TranscriptText))
+        {
+            IsSelectedSessionTranscriptLoading = false;
+            SelectedSessionTranscriptText = session.TranscriptText;
+            return;
+        }
+
+        var language = SelectedLanguageOption?.Language ?? AppLanguage.English;
+        IsSelectedSessionTranscriptLoading = true;
+        SelectedSessionTranscriptText = Strings["TranscriptLoading"];
+
+        _ = Task.Run(() =>
+            {
+                try
+                {
+                    return _sessionService.LoadTranscriptText(session, language);
+                }
+                catch (Exception exception)
+                {
+                    _logService.Error(nameof(MainWindow), "Failed to load transcript for the selected session.", exception);
+                    return Strings["NoTranscriptLoaded"];
+                }
+            })
+            .ContinueWith(
+                task =>
+                {
+                    _ = Dispatcher.InvokeAsync(() =>
+                    {
+                        if (loadVersion != _selectedSessionTranscriptLoadVersion ||
+                            !ReferenceEquals(SelectedSession, session))
+                        {
+                            return;
+                        }
+
+                        SelectedSessionTranscriptText = task.Result;
+                        IsSelectedSessionTranscriptLoading = false;
+                    });
+                },
+                TaskScheduler.Default);
+    }
+
+    private OpenCodeSessionLinkRecord? GetSelectedSessionOpenCodeLink()
+    {
+        return SelectedSession is not null &&
+               _openCodeLinks.TryGetValue(SelectedSession.SessionId, out var linkRecord)
+            ? linkRecord
+            : null;
+    }
+
+    private bool IsSelectedSessionOpenCodeBridgeStale()
+    {
+        var session = SelectedSession;
+        var linkRecord = GetSelectedSessionOpenCodeLink();
+
+        return session is not null &&
+               linkRecord is not null &&
+               IsOpenCodeLinkStale(session, linkRecord);
+    }
+
+    private static bool IsOpenCodeLinkStale(SessionRecord session, OpenCodeSessionLinkRecord linkRecord)
+    {
+        return session.UpdatedAtUtc > linkRecord.CodexUpdatedAtUtc ||
+               string.IsNullOrWhiteSpace(linkRecord.HandoffPath) ||
+               !File.Exists(linkRecord.HandoffPath) ||
+               AiHelperWorkspaceService.IsUnsafeWorkspace(linkRecord.WorkingDirectory);
+    }
+
+    private string BuildSelectedSessionOpenCodeBridgeText()
+    {
+        var session = SelectedSession;
+        var issue = GetOpenCodeBridgeIssue(session);
+
+        if (!string.IsNullOrWhiteSpace(issue))
+        {
+            return issue;
+        }
+
+        var linkRecord = GetSelectedSessionOpenCodeLink();
+        if (linkRecord is null)
+        {
+            return Strings["OpenCodeBridgeMissing"];
+        }
+
+        var shortId = linkRecord.OpenCodeSessionId.Length <= 18
+            ? linkRecord.OpenCodeSessionId
+            : linkRecord.OpenCodeSessionId[..18];
+
+        return IsSelectedSessionOpenCodeBridgeStale()
+            ? Strings.Format("OpenCodeBridgeLinkedStale", shortId)
+            : Strings.Format("OpenCodeBridgeLinkedReady", shortId);
+    }
+
+    private string? GetOpenCodeBridgeIssue(SessionRecord? session)
+    {
+        if (session is null)
+        {
+            return Strings["OpenCodeBridgeNoSelection"];
+        }
+
+        if (!_openCodeBridgeService.IsOpenCodeDesktopAvailable)
+        {
+            return Strings["OpenCodeBridgeNotInstalled"];
+        }
+
+        if (!File.Exists(session.FilePath) || (session.UserMessageCount + session.AssistantMessageCount) <= 0)
+        {
+            return Strings["OpenCodeBridgeSessionUnavailable"];
+        }
+
+        return null;
+    }
+
+    private void RefreshOpenCodeBindings()
+    {
+        OnPropertyChanged(nameof(CanResumeSelectedSessionInOpenCode));
+        OnPropertyChanged(nameof(CanRefreshSelectedSessionOpenCodeBridge));
+        OnPropertyChanged(nameof(OpenCodeResumeButtonText));
+        OnPropertyChanged(nameof(SelectedSessionOpenCodeBridgeText));
+    }
+
+    private async Task<OpenCodeSessionLinkRecord> EnsureOpenCodeLinkAsync(
+        SessionRecord selectedSession,
+        bool forceRefresh)
+    {
+        if (!forceRefresh &&
+            _openCodeLinks.TryGetValue(selectedSession.SessionId, out var existingLink) &&
+            !IsOpenCodeLinkStale(selectedSession, existingLink))
+        {
+            RefreshOpenCodeBindings();
+            return existingLink;
+        }
+
+        var conversation = await Task.Run(() => _sessionService.GetConversation(selectedSession));
+        var linkRecord = await Task.Run(() => _openCodeBridgeService.CreateBridge(conversation));
+        _openCodeLinks[selectedSession.SessionId] = linkRecord;
+        _openCodeLinkService.SaveLinks(_openCodeLinks);
+        RefreshOpenCodeBindings();
+        return linkRecord;
+    }
+
+    private void EnsureSessionWatchersInitialized()
+    {
+        if (_sessionFolderWatcher is null)
+        {
+            var sessionsFolder = _environmentService.SessionsFolder;
+
+            if (Directory.Exists(sessionsFolder))
+            {
+                _sessionFolderWatcher = CreateSessionWatcher(
+                    sessionsFolder,
+                    "*.jsonl",
+                    includeSubdirectories: true);
+            }
+        }
+
+        if (_sessionIndexWatcher is null)
+        {
+            var codexHomeFolder = _environmentService.CodexHomeFolder;
+
+            if (Directory.Exists(codexHomeFolder))
+            {
+                _sessionIndexWatcher = CreateSessionWatcher(
+                    codexHomeFolder,
+                    "session_index.jsonl",
+                    includeSubdirectories: false);
+            }
+        }
+    }
+
+    private FileSystemWatcher CreateSessionWatcher(string path, string filter, bool includeSubdirectories)
+    {
+        var watcher = new FileSystemWatcher(path, filter)
+        {
+            IncludeSubdirectories = includeSubdirectories,
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
+            EnableRaisingEvents = true
+        };
+
+        watcher.Changed += SessionWatcher_Changed;
+        watcher.Created += SessionWatcher_Changed;
+        watcher.Deleted += SessionWatcher_Changed;
+        watcher.Renamed += SessionWatcher_Renamed;
+        watcher.Error += SessionWatcher_Error;
+
+        return watcher;
+    }
+
+    private void SessionWatcher_Changed(object sender, FileSystemEventArgs e)
+    {
+        MarkSessionsRefreshPending();
+    }
+
+    private void SessionWatcher_Renamed(object sender, RenamedEventArgs e)
+    {
+        MarkSessionsRefreshPending();
+    }
+
+    private void SessionWatcher_Error(object sender, ErrorEventArgs e)
+    {
+        _logService.Error(nameof(MainWindow), "The session watcher reported an error.", e.GetException());
+
+        if (ReferenceEquals(sender, _sessionFolderWatcher))
+        {
+            DisposeSessionWatcher(ref _sessionFolderWatcher);
+        }
+        else if (ReferenceEquals(sender, _sessionIndexWatcher))
+        {
+            DisposeSessionWatcher(ref _sessionIndexWatcher);
+        }
+
+        MarkSessionsRefreshPending();
+        _ = Dispatcher.BeginInvoke(EnsureSessionWatchersInitialized, DispatcherPriority.Background);
+    }
+
+    private void MarkSessionsRefreshPending()
+    {
+        _sessionRefreshPending = true;
+    }
+
+    private void MarkSetupRefreshPending()
+    {
+        _setupRefreshPending = true;
+    }
+
+    private void DisposeSessionWatchers()
+    {
+        DisposeSessionWatcher(ref _sessionFolderWatcher);
+        DisposeSessionWatcher(ref _sessionIndexWatcher);
+    }
+
+    private static void DisposeSessionWatcher(ref FileSystemWatcher? watcher)
+    {
+        watcher?.Dispose();
+        watcher = null;
     }
 
     private void OpenSelectedFileButton_Click(object sender, RoutedEventArgs e)
@@ -1177,6 +1910,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OpenExplorerSelect(selectedSession.FilePath);
+    }
+
+    private void OpenSelectedSessionDirectoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedSession = SelectedSession;
+
+        if (selectedSession is null ||
+            string.IsNullOrWhiteSpace(selectedSession.WorkingDirectory) ||
+            selectedSession.WorkingDirectory == "-" ||
+            !Directory.Exists(selectedSession.WorkingDirectory))
+        {
+            return;
+        }
+
+        CodexEnvironmentService.OpenFolder(selectedSession.WorkingDirectory);
+        SetStatus("#F8E7D6", "StatusSessionFolderOpened", selectedSession.WorkingDirectory);
+    }
+
+    private void CopySelectedSessionIdButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedSession = SelectedSession;
+
+        if (selectedSession is null || string.IsNullOrWhiteSpace(selectedSession.SessionId))
+        {
+            return;
+        }
+
+        Clipboard.SetText(selectedSession.SessionId);
+        SetStatus("#F8E7D6", "StatusSessionIdCopied");
     }
 
     private async void DeleteSelectedSessionButton_Click(object sender, RoutedEventArgs e)
@@ -1203,10 +1965,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _sessionService.DeleteSession(selectedSession);
             _favoriteSessionIds.Remove(selectedSession.SessionId);
+            _openCodeLinks.Remove(selectedSession.SessionId);
             _sessionNotes.Remove(selectedSession.SessionId);
             _favoritesService.SaveFavorites(_favoriteSessionIds);
+            _openCodeLinkService.SaveLinks(_openCodeLinks);
             _notesService.SaveNotes(_sessionNotes);
-            await RefreshSessionsAsync(isAutomaticRefresh: false);
+            await RefreshSessionsAsync(isAutomaticRefresh: false, forceRefresh: true);
         }
         catch (Exception exception)
         {
@@ -1240,17 +2004,128 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var workingDirectory = Directory.Exists(selectedSession.WorkingDirectory)
-            ? selectedSession.WorkingDirectory
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var workingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
+            selectedSession.WorkingDirectory,
+            selectedSession.SessionId,
+            selectedSession.Title,
+            out _);
 
+        MarkSessionsRefreshPending();
         _environmentService.LaunchResumeSession(selectedSession.SessionId, workingDirectory);
         SetStatus("#F8E7D6", "StatusResumeStarted");
     }
 
+    private async void ResumeSelectedSessionInOpenCodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedSession = SelectedSession;
+
+        _logService.Info(
+            nameof(MainWindow),
+            $"OpenCode bridge click. Session={selectedSession?.SessionId ?? "-"}; Action=ResumeOrCreate.");
+
+        if (selectedSession is null)
+        {
+            return;
+        }
+
+        var issue = GetOpenCodeBridgeIssue(selectedSession);
+        if (!string.IsNullOrWhiteSpace(issue))
+        {
+            SetStatus("#FFD6D6", "StatusOpenCodeBridgeFailed", issue);
+            MessageBox.Show(
+                issue,
+                Strings["DetailOpenCodeBridge"],
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            IsOpenCodeBusy = true;
+            SetStatus("#F8E7D6", "StatusOpenCodeBridgePreparing");
+            var hadExistingLink = GetSelectedSessionOpenCodeLink() is not null;
+            var linkRecord = await EnsureOpenCodeLinkAsync(selectedSession, forceRefresh: false);
+            _openCodeBridgeService.LaunchSession(linkRecord);
+            _logService.Info(
+                nameof(MainWindow),
+                $"OpenCode bridge ready. Session={selectedSession.SessionId}; OpenCode={linkRecord.OpenCodeSessionId}; Existing={hadExistingLink}.");
+            SetStatus(
+                "#F8E7D6",
+                hadExistingLink
+                    ? "StatusOpenCodeStarted"
+                    : "StatusOpenCodeBridgeCreated");
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "OpenCode bridge resume/create failed.", exception);
+            SetStatus("#FFD6D6", "StatusOpenCodeBridgeFailed", exception.Message);
+            MessageBox.Show(
+                Strings.Format("StatusOpenCodeBridgeFailed", exception.Message),
+                Strings["DetailOpenCodeBridge"],
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsOpenCodeBusy = false;
+        }
+    }
+
+    private async void RefreshSelectedSessionOpenCodeBridgeButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedSession = SelectedSession;
+
+        _logService.Info(
+            nameof(MainWindow),
+            $"OpenCode bridge click. Session={selectedSession?.SessionId ?? "-"}; Action=Refresh.");
+
+        if (selectedSession is null)
+        {
+            return;
+        }
+
+        var issue = GetOpenCodeBridgeIssue(selectedSession);
+        if (!string.IsNullOrWhiteSpace(issue))
+        {
+            SetStatus("#FFD6D6", "StatusOpenCodeBridgeFailed", issue);
+            MessageBox.Show(
+                issue,
+                Strings["DetailOpenCodeBridge"],
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            IsOpenCodeBusy = true;
+            SetStatus("#F8E7D6", "StatusOpenCodeBridgePreparing");
+            await EnsureOpenCodeLinkAsync(selectedSession, forceRefresh: true);
+            _logService.Info(
+                nameof(MainWindow),
+                $"OpenCode bridge refreshed. Session={selectedSession.SessionId}.");
+            SetStatus("#F8E7D6", "StatusOpenCodeBridgeRefreshed");
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "OpenCode bridge refresh failed.", exception);
+            SetStatus("#FFD6D6", "StatusOpenCodeBridgeFailed", exception.Message);
+            MessageBox.Show(
+                Strings.Format("StatusOpenCodeBridgeFailed", exception.Message),
+                Strings["DetailOpenCodeBridge"],
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsOpenCodeBusy = false;
+        }
+    }
+
     private async void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshSessionsAsync(isAutomaticRefresh: false);
+        await RefreshSessionsAsync(isAutomaticRefresh: false, forceRefresh: true);
     }
 
     private async void RefreshTimer_Tick(object? sender, EventArgs e)
@@ -1258,14 +2133,82 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         await RefreshSessionsAsync(isAutomaticRefresh: true);
     }
 
+    private void SearchDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _searchDebounceTimer.Stop();
+        ApplyFilter();
+    }
+
+    private void LayoutRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        _layoutRefreshTimer.Stop();
+        RefreshAdaptiveLayoutBindings();
+    }
+
     private async void SetupRefreshTimer_Tick(object? sender, EventArgs e)
     {
-        if (SelectedAppSection != AppSection.Setup)
+        ExpireSetupRefreshBoostIfNeeded();
+
+        if (SelectedAppSection != AppSection.Setup && !IsSetupRefreshBoostActive)
         {
             return;
         }
 
         await RefreshSetupSectionAsync(preserveDnsStatus: true);
+    }
+
+    private bool IsSetupRefreshBoostActive => _setupRefreshBoostUntilUtc > DateTime.UtcNow;
+
+    private void BeginSetupAction(string statusText, Action focusAction)
+    {
+        _environmentService.InvalidateSnapshotCaches();
+        focusAction();
+        BeginSetupRefreshBoost();
+        SetSetupStatus("#F8E7D6", statusText);
+    }
+
+    private void BeginSetupRefreshBoost()
+    {
+        _setupRefreshBoostUntilUtc = DateTime.UtcNow.Add(SetupRefreshBoostDuration);
+        MarkSetupRefreshPending();
+        RefreshSetupOverviewBindings();
+        UpdateSetupRefreshTimer();
+    }
+
+    private void ExpireSetupRefreshBoostIfNeeded()
+    {
+        if (_setupRefreshBoostUntilUtc == DateTime.MinValue || IsSetupRefreshBoostActive)
+        {
+            return;
+        }
+
+        _setupRefreshBoostUntilUtc = DateTime.MinValue;
+        RefreshSetupOverviewBindings();
+        UpdateSetupRefreshTimer();
+    }
+
+    private void FocusSetupCoreSection()
+    {
+        SelectedAppSection = AppSection.Setup;
+        IsSetupCoreSectionExpanded = true;
+        IsSetupCodexSectionExpanded = false;
+        IsSetupLocalAiSectionExpanded = false;
+    }
+
+    private void FocusSetupCodexSection()
+    {
+        SelectedAppSection = AppSection.Setup;
+        IsSetupCoreSectionExpanded = false;
+        IsSetupCodexSectionExpanded = true;
+        IsSetupLocalAiSectionExpanded = false;
+    }
+
+    private void FocusSetupLocalAiSection()
+    {
+        SelectedAppSection = AppSection.Setup;
+        IsSetupCoreSectionExpanded = false;
+        IsSetupCodexSectionExpanded = false;
+        IsSetupLocalAiSectionExpanded = true;
     }
 
     private void ToggleFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -1318,24 +2261,62 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedAppSection = AppSection.NewSession;
     }
 
+    private void ExtensionsSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedAppSection = AppSection.Extensions;
+    }
+
     private void SetupSectionButton_Click(object sender, RoutedEventArgs e)
     {
         SelectedAppSection = AppSection.Setup;
     }
 
+    private void OpenSetupCoreSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        FocusSetupCoreSection();
+    }
+
+    private void OpenSetupCodexSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        FocusSetupCodexSection();
+    }
+
+    private void OpenSetupLocalAiSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        FocusSetupLocalAiSection();
+    }
+
     private void ToggleSetupCoreSectionButton_Click(object sender, RoutedEventArgs e)
     {
-        IsSetupCoreSectionExpanded = !IsSetupCoreSectionExpanded;
+        if (IsSetupCoreSectionExpanded)
+        {
+            IsSetupCoreSectionExpanded = false;
+            return;
+        }
+
+        FocusSetupCoreSection();
     }
 
     private void ToggleSetupCodexSectionButton_Click(object sender, RoutedEventArgs e)
     {
-        IsSetupCodexSectionExpanded = !IsSetupCodexSectionExpanded;
+        if (IsSetupCodexSectionExpanded)
+        {
+            IsSetupCodexSectionExpanded = false;
+            return;
+        }
+
+        FocusSetupCodexSection();
     }
 
     private void ToggleSetupLocalAiSectionButton_Click(object sender, RoutedEventArgs e)
     {
-        IsSetupLocalAiSectionExpanded = !IsSetupLocalAiSectionExpanded;
+        if (IsSetupLocalAiSectionExpanded)
+        {
+            IsSetupLocalAiSectionExpanded = false;
+            return;
+        }
+
+        FocusSetupLocalAiSection();
     }
 
     private void ToggleSetupDnsSectionButton_Click(object sender, RoutedEventArgs e)
@@ -1365,8 +2346,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        NewSessionWorkingDirectory = SelectedSession.WorkingDirectory;
+        NewSessionWorkingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
+            SelectedSession.WorkingDirectory,
+            SelectedSession.SessionId,
+            SelectedSession.Title,
+            out _);
         SetNewSessionStatus("#F8E7D6", Strings["NewSessionStatusDirectoryCopied"]);
+    }
+
+    private void CopyNewSessionPreviewCommandButton_Click(object sender, RoutedEventArgs e)
+    {
+        Clipboard.SetText(NewSessionPreviewCommandText);
+        SetNewSessionStatus("#F8E7D6", Strings["NewSessionStatusCommandCopied"]);
     }
 
     private void LaunchNewSessionButton_Click(object sender, RoutedEventArgs e)
@@ -1387,6 +2378,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
+            MarkSessionsRefreshPending();
             _environmentService.LaunchInteractiveSession(BuildNewSessionLaunchOptions());
             SetNewSessionStatus("#F8E7D6", Strings["NewSessionStatusStarted"]);
         }
@@ -1422,6 +2414,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
+            MarkSessionsRefreshPending();
             _environmentService.LaunchInteractiveSession(BuildNewSessionLaunchOptions([imagePath]));
             SetNewSessionStatus("#F8E7D6", Strings.Format("NewSessionStatusStartedWithImage", Path.GetFileName(imagePath)));
         }
@@ -1433,7 +2426,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void RefreshSetupStatusButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshSetupSectionAsync(preserveDnsStatus: false);
+        await RefreshSetupSectionAsync(preserveDnsStatus: false, forceRefresh: true);
     }
 
     private void InstallBaseComponentsButton_Click(object sender, RoutedEventArgs e)
@@ -1441,7 +2434,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchPrerequisitesInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusBaseComponentsInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusBaseComponentsInstallStarted"], FocusSetupCoreSection);
         }
         catch (Exception exception)
         {
@@ -1454,7 +2447,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchNodeInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusNodeInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusNodeInstallStarted"], FocusSetupCoreSection);
         }
         catch (Exception exception)
         {
@@ -1467,7 +2460,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchGitInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusGitInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusGitInstallStarted"], FocusSetupCoreSection);
         }
         catch (Exception exception)
         {
@@ -1480,7 +2473,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchWingetRepairTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusWingetRepairStarted"]);
+            BeginSetupAction(Strings["SetupStatusWingetRepairStarted"], FocusSetupCoreSection);
         }
         catch (Exception exception)
         {
@@ -1490,7 +2483,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
-        await RefreshUpdateStatusAsync();
+        await RefreshUpdateStatusAsync(forceRefresh: true);
     }
 
     private async void DownloadUpdateButton_Click(object sender, RoutedEventArgs e)
@@ -1499,7 +2492,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (snapshot is null)
         {
-            await RefreshUpdateStatusAsync();
+            await RefreshUpdateStatusAsync(forceRefresh: true);
             snapshot = _lastAppUpdateSnapshot;
         }
 
@@ -1973,7 +2966,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchCodexInstallRepairTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusInstallerStarted"]);
+            BeginSetupAction(Strings["SetupStatusInstallerStarted"], FocusSetupCodexSection);
         }
         catch (Exception exception)
         {
@@ -1985,8 +2978,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         try
         {
-            _environmentService.OpenCodexDesktopStorePage();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusCodexDesktopInstallStarted"]);
+            _environmentService.LaunchCodexDesktopInstallTerminal();
+            BeginSetupAction(Strings["SetupStatusCodexDesktopInstallStarted"], FocusSetupCodexSection);
         }
         catch (Exception exception)
         {
@@ -2007,12 +3000,71 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void InstallOpenCodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOpenCodeInstallTerminal();
+            BeginSetupAction(Strings["SetupStatusOpenCodeInstallStarted"], FocusSetupCodexSection);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void LaunchOpenCodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.LaunchOpenCodeTerminal();
+            BeginSetupAction(Strings["SetupStatusOpenCodeStarted"], FocusSetupCodexSection);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void UninstallOpenCodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmLocalAiRemoval(
+                Strings["SetupRemoveRuntimeWarningTitle"],
+                Strings.Format("SetupRemoveRuntimeWarningMessage", "OpenCode")))
+        {
+            return;
+        }
+
+        try
+        {
+            _environmentService.LaunchOpenCodeUninstallTerminal();
+            BeginSetupAction(Strings["SetupStatusOpenCodeUninstallStarted"], FocusSetupCodexSection);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
+    private void OpenOpenCodeDocsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _environmentService.OpenOpenCodeDocsPage();
+            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenCodeDocsOpened"]);
+        }
+        catch (Exception exception)
+        {
+            SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+        }
+    }
+
     private void InstallOllamaButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
             _environmentService.LaunchOllamaInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusOllamaInstallStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2025,7 +3077,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaApp();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaAppStarted"]);
+            BeginSetupAction(Strings["SetupStatusOllamaAppStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2038,7 +3090,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaServeTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaServerStarted"]);
+            BeginSetupAction(Strings["SetupStatusOllamaServerStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2058,7 +3110,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaStopTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaStopStarted"]);
+            BeginSetupAction(Strings["SetupStatusOllamaStopStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2077,7 +3129,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaModelInstallTerminal("phi4-mini");
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusStarterModelInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusStarterModelInstallStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2090,7 +3142,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchLmStudioInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusLmStudioInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusLmStudioInstallStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2110,7 +3162,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaUninstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusOllamaUninstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusOllamaUninstallStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2130,7 +3182,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchLmStudioUninstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusLmStudioUninstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusLmStudioUninstallStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2154,7 +3206,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaModelInstallTerminal(option.ModelTag);
-            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusModelInstallStarted", option.Name));
+            BeginSetupAction(Strings.Format("SetupStatusModelInstallStarted", option.Name), FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2184,7 +3236,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOllamaModelRemoveTerminal(option.ModelTag);
-            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusModelRemoveStarted", option.Name));
+            BeginSetupAction(Strings.Format("SetupStatusModelRemoveStarted", option.Name), FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2202,7 +3254,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchCreativeToolInstallTerminal(option.PackageId, option.Name);
-            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusCreativeToolInstallStarted", option.Name));
+            BeginSetupAction(Strings.Format("SetupStatusCreativeToolInstallStarted", option.Name), FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2232,7 +3284,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchCreativeToolUninstallTerminal(option.PackageId, option.Name);
-            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusCreativeToolRemoveStarted", option.Name));
+            BeginSetupAction(Strings.Format("SetupStatusCreativeToolRemoveStarted", option.Name), FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2250,7 +3302,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOpenClawInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusAiAgentInstallStarted", option.Name));
+            BeginSetupAction(Strings.Format("SetupStatusAiAgentInstallStarted", option.Name), FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2280,7 +3332,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOpenClawUninstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings.Format("SetupStatusAiAgentRemoveStarted", option.Name));
+            BeginSetupAction(Strings.Format("SetupStatusAiAgentRemoveStarted", option.Name), FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2306,7 +3358,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchOpenClawNodeInstallTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusOpenClawNodeInstallStarted"]);
+            BeginSetupAction(Strings["SetupStatusOpenClawNodeInstallStarted"], FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -2399,7 +3451,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             var result = await Task.Run(applyMode);
-            await RefreshSetupSectionAsync(preserveDnsStatus: true);
+            await RefreshSetupSectionAsync(preserveDnsStatus: true, forceRefresh: true);
 
             if (string.IsNullOrWhiteSpace(result.BackupPath))
             {
@@ -2504,7 +3556,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _environmentService.LaunchCodexLoginTerminal();
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusLoginStarted"]);
+            BeginSetupAction(Strings["SetupStatusLoginStarted"], FocusSetupCodexSection);
         }
         catch (Exception exception)
         {
@@ -2600,8 +3652,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplySessions(IReadOnlyList<SessionRecord> refreshedSessions)
     {
-        _favoriteSessionIds = _favoritesService.LoadFavorites();
-        _sessionNotes = _notesService.LoadNotes();
         _allSessions = refreshedSessions.ToList();
 
         foreach (var session in _allSessions)
@@ -2622,6 +3672,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(FavoritesTabText));
         OnPropertyChanged(nameof(SelectedSessionFavoriteText));
         ApplyFilter();
+        RefreshOpenCodeBindings();
     }
 
     private void ApplyLanguageChange(AppLanguage language)
@@ -2643,6 +3694,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedSessionPreviewText));
         OnPropertyChanged(nameof(SelectedSessionTranscriptText));
         OnPropertyChanged(nameof(SelectedSessionFavoriteText));
+        OnPropertyChanged(nameof(CanOpenSelectedSessionDirectory));
         OnPropertyChanged(nameof(NewSessionPreviewCommandText));
         OnPropertyChanged(nameof(NewSessionPromptHelpText));
         OnPropertyChanged(nameof(NewSessionWorkingDirectoryHelpText));
@@ -2684,8 +3736,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanOpenOpenClawConfig));
         OnPropertyChanged(nameof(OpenClawDetectedConfigText));
         OnPropertyChanged(nameof(OpenClawRecommendationText));
+        OnPropertyChanged(nameof(CanInstallOpenCode));
+        OnPropertyChanged(nameof(CanLaunchOpenCode));
+        OnPropertyChanged(nameof(CanUninstallOpenCode));
+        OnPropertyChanged(nameof(OpenCodeSetupDetailText));
+        OnPropertyChanged(nameof(OpenCodeResumeButtonText));
+        OnPropertyChanged(nameof(SelectedSessionOpenCodeBridgeText));
+        OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+        OnPropertyChanged(nameof(CanDeleteSelectedExtension));
+        OnPropertyChanged(nameof(CanInstallSelectedExtension));
+        OnPropertyChanged(nameof(CanEnableSelectedExtension));
+        OnPropertyChanged(nameof(CanDisableSelectedExtension));
+        OnPropertyChanged(nameof(CanRemoveSelectedExtension));
+        OnPropertyChanged(nameof(CanSaveSelectedExtension));
 
         RefreshLaunchOptionCollections();
+        RefreshExtensionKindOptions();
+        if (_isExtensionsSectionInitialized)
+        {
+            LoadExtensionsSafe();
+        }
+
         RefreshLocalAiModelOptions();
         RefreshCreativeAiToolOptions(_lastEnvironmentSnapshot);
         RefreshAiAgentToolOptions(_lastEnvironmentSnapshot);
@@ -2705,9 +3776,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ApplyUpdateSnapshot(_lastAppUpdateSnapshot);
         }
 
+        if (SelectedSession is not null)
+        {
+            SelectedSession.TranscriptText = string.Empty;
+            QueueSelectedSessionTranscriptLoad(SelectedSession);
+        }
+
         if (IsLoaded)
         {
-            _ = RefreshSessionsAsync(isAutomaticRefresh: false);
+            _ = RefreshSessionsAsync(isAutomaticRefresh: false, forceRefresh: true);
         }
     }
 
@@ -2719,6 +3796,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         LastUpdatedText = _lastUpdatedAtLocal is null
             ? Strings["NoRefreshYet"]
             : Strings.Format("LastUpdated", _lastUpdatedAtLocal.Value.ToString("dd.MM.yyyy HH:mm:ss"));
+        RefreshSetupOverviewBindings();
+        OnPropertyChanged(nameof(SettingsPhotoPasteFixStateText));
+        RefreshOpenCodeBindings();
     }
 
     private void RefreshSectionChromeText()
@@ -2737,6 +3817,339 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         UpdateStatusForeground = "#F8E7D6";
         DnsStatusText = Strings["DnsStatusReady"];
         DnsStatusForeground = "#F8E7D6";
+        ExtensionStatusText = Strings["ExtensionsStatusReady"];
+        ExtensionStatusForeground = "#F8E7D6";
+        RefreshSetupOverviewBindings();
+        RefreshOpenCodeBindings();
+    }
+
+    private void RefreshExtensionKindOptions()
+    {
+        ReplaceLaunchOptions(
+            ExtensionKindOptions,
+            [
+                new LaunchOption
+                {
+                    Value = "Plugin",
+                    DisplayName = Strings["ExtensionsKindPlugin"],
+                    Description = Strings["ExtensionsKindPluginDescription"]
+                },
+                new LaunchOption
+                {
+                    Value = "MCP",
+                    DisplayName = Strings["ExtensionsKindMcp"],
+                    Description = Strings["ExtensionsKindMcpDescription"]
+                }
+            ]);
+    }
+
+    private void LoadExtensionsSafe()
+    {
+        try
+        {
+            var selectedId = SelectedExtension?.Id;
+            var items = _extensionCatalogService.LoadExtensions(Strings);
+            AiExtensions.Clear();
+
+            foreach (var item in items)
+            {
+                LocalizeExtensionItem(item);
+                AiExtensions.Add(item);
+            }
+
+            SelectedExtension = AiExtensions.FirstOrDefault(item => string.Equals(item.Id, selectedId, StringComparison.OrdinalIgnoreCase)) ??
+                                AiExtensions.FirstOrDefault();
+            SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusLoaded"]);
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to load extension catalog.", exception);
+            SetExtensionStatus("#FFD6D6", Strings.Format("ExtensionsStatusLoadFailed", exception.Message));
+        }
+    }
+
+    private void PopulateExtensionEditor(AiExtensionItem? item)
+    {
+        if (item is null)
+        {
+            ExtensionName = string.Empty;
+            SelectedExtensionKind = "Plugin";
+            ExtensionCommandOrUri = string.Empty;
+            ExtensionDescription = string.Empty;
+            ExtensionIsEnabled = true;
+            return;
+        }
+
+        ExtensionName = item.Name;
+        SelectedExtensionKind = item.Kind == AiExtensionKind.Mcp ? "MCP" : "Plugin";
+        ExtensionCommandOrUri = item.CommandOrUri;
+        ExtensionDescription = item.Description;
+        ExtensionIsEnabled = item.IsEnabled;
+    }
+
+    private void InstallSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected is null)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsNoSelection"]);
+            return;
+        }
+
+        selected.IsInstalled = true;
+        selected.IsEnabled = true;
+        ExtensionIsEnabled = true;
+        SaveExtensionsSafe();
+        RefreshExtensionGridBindings();
+        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusInstalled", selected.Name));
+    }
+
+    private void EnableSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected is null)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsNoSelection"]);
+            return;
+        }
+
+        selected.IsInstalled = true;
+        selected.IsEnabled = true;
+        ExtensionIsEnabled = true;
+        SaveExtensionsSafe();
+        RefreshExtensionGridBindings();
+        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusEnabled", selected.Name));
+    }
+
+    private void DisableSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected is null)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsNoSelection"]);
+            return;
+        }
+
+        selected.IsEnabled = false;
+        ExtensionIsEnabled = false;
+        SaveExtensionsSafe();
+        RefreshExtensionGridBindings();
+        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusDisabled", selected.Name));
+    }
+
+    private void RemoveSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected is null)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsNoSelection"]);
+            return;
+        }
+
+        if (selected.IsCustom)
+        {
+            DeleteSelectedExtensionButton_Click(sender, e);
+            return;
+        }
+
+        var result = MessageBox.Show(
+            Strings.Format("ExtensionsRemovePresetWarningMessage", selected.Name),
+            Strings["ExtensionsRemovePresetWarningTitle"],
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        selected.IsInstalled = false;
+        selected.IsEnabled = false;
+        ExtensionIsEnabled = false;
+        SaveExtensionsSafe();
+        RefreshExtensionGridBindings();
+        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusRemoved", selected.Name));
+    }
+
+    private void AddExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CanSaveSelectedExtension)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusNameRequired"]);
+            return;
+        }
+
+        var item = BuildExtensionFromEditor();
+        item.IsPreset = false;
+        item.IsInstalled = true;
+        LocalizeExtensionItem(item);
+        AiExtensions.Add(item);
+        SaveExtensionsSafe();
+        SelectedExtension = item;
+        SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusAdded"]);
+    }
+
+    private void SaveSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!CanSaveSelectedExtension)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusNameRequired"]);
+            return;
+        }
+
+        if (SelectedExtension?.IsCustom != true)
+        {
+            var item = BuildExtensionFromEditor();
+            item.IsPreset = false;
+            item.IsInstalled = true;
+            LocalizeExtensionItem(item);
+            AiExtensions.Add(item);
+            SaveExtensionsSafe();
+            SelectedExtension = item;
+            SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusPresetCopied"]);
+            return;
+        }
+
+        SelectedExtension.Name = ExtensionName.Trim();
+        SelectedExtension.Kind = ParseExtensionKind(SelectedExtensionKind);
+        SelectedExtension.CommandOrUri = ExtensionCommandOrUri.Trim();
+        SelectedExtension.Description = ExtensionDescription.Trim();
+        SelectedExtension.IsEnabled = ExtensionIsEnabled;
+        SelectedExtension.IsInstalled = SelectedExtension.IsInstalled || ExtensionIsEnabled;
+        LocalizeExtensionItem(SelectedExtension);
+        SaveExtensionsSafe();
+        RefreshExtensionGridBindings();
+        OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+        SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusSaved"]);
+    }
+
+    private void DuplicateExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected is null)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsNoSelection"]);
+            return;
+        }
+
+        var copy = selected.Clone();
+        copy.Id = Guid.NewGuid().ToString("N");
+        copy.Name = Strings.Format("ExtensionsDuplicateName", selected.Name);
+        copy.IsPreset = false;
+        copy.IsInstalled = true;
+        LocalizeExtensionItem(copy);
+        AiExtensions.Add(copy);
+        SaveExtensionsSafe();
+        SelectedExtension = copy;
+        SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusPresetCopied"]);
+    }
+
+    private void DeleteSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected?.IsCustom != true)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusPresetDeleteBlocked"]);
+            return;
+        }
+
+        var result = MessageBox.Show(
+            Strings.Format("ExtensionsDeleteWarningMessage", selected.Name),
+            Strings["ExtensionsDeleteWarningTitle"],
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        AiExtensions.Remove(selected);
+        SaveExtensionsSafe();
+        SelectedExtension = AiExtensions.FirstOrDefault();
+        SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusDeleted"]);
+    }
+
+    private AiExtensionItem BuildExtensionFromEditor()
+    {
+        return new AiExtensionItem
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = ExtensionName.Trim(),
+            Kind = ParseExtensionKind(SelectedExtensionKind),
+            CommandOrUri = ExtensionCommandOrUri.Trim(),
+            Description = ExtensionDescription.Trim(),
+            IsInstalled = true,
+            IsEnabled = ExtensionIsEnabled
+        };
+    }
+
+    private void SaveExtensionsSafe()
+    {
+        try
+        {
+            _extensionCatalogService.SaveExtensions(AiExtensions);
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to save custom extensions.", exception);
+            SetExtensionStatus("#FFD6D6", Strings.Format("ExtensionsStatusSaveFailed", exception.Message));
+        }
+    }
+
+    private void RefreshExtensionGridBindings()
+    {
+        var selected = SelectedExtension;
+        var currentItems = AiExtensions.ToList();
+        foreach (var item in currentItems)
+        {
+            LocalizeExtensionItem(item);
+        }
+
+        AiExtensions.Clear();
+
+        foreach (var item in currentItems)
+        {
+            AiExtensions.Add(item);
+        }
+
+        SelectedExtension = selected;
+        OnPropertyChanged(nameof(CanDeleteSelectedExtension));
+        OnPropertyChanged(nameof(CanInstallSelectedExtension));
+        OnPropertyChanged(nameof(CanEnableSelectedExtension));
+        OnPropertyChanged(nameof(CanDisableSelectedExtension));
+        OnPropertyChanged(nameof(CanRemoveSelectedExtension));
+        OnPropertyChanged(nameof(CanSaveSelectedExtension));
+        OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+    }
+
+    private void SetExtensionStatus(string foreground, string text)
+    {
+        ExtensionStatusForeground = foreground;
+        ExtensionStatusText = text;
+    }
+
+    private static AiExtensionKind ParseExtensionKind(string? value)
+    {
+        return string.Equals(value, "MCP", StringComparison.OrdinalIgnoreCase)
+            ? AiExtensionKind.Mcp
+            : AiExtensionKind.Plugin;
+    }
+
+    private void LocalizeExtensionItem(AiExtensionItem item)
+    {
+        item.SourceDisplayLabel = item.IsPreset ? Strings["ExtensionsSourcePreset"] : Strings["ExtensionsSourceCustom"];
+        item.InstallStateLabel = item.IsInstalled
+            ? item.IsEnabled
+                ? Strings["ExtensionsInstallStateInstalledEnabled"]
+                : Strings["ExtensionsInstallStateInstalledDisabled"]
+            : Strings["ExtensionsInstallStateNotInstalled"];
     }
 
     private void RefreshLaunchOptionCollections()
@@ -3878,21 +5291,38 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private async Task RefreshSetupSectionAsync(bool preserveDnsStatus)
+    private async Task RefreshSetupSectionAsync(bool preserveDnsStatus, bool forceRefresh = false)
     {
-        await RefreshSetupStatusAsync();
-        await RefreshDnsAdaptersAsync(preserveStatus: preserveDnsStatus);
+        var setupRefreshed = await RefreshSetupStatusAsync(forceRefresh);
+        var shouldRefreshDns =
+            forceRefresh ||
+            !preserveDnsStatus ||
+            DnsAdapters.Count == 0 ||
+            (SelectedAppSection == AppSection.Setup && IsSetupDnsSectionExpanded);
+
+        if (setupRefreshed && shouldRefreshDns)
+        {
+            await RefreshDnsAdaptersAsync(preserveStatus: preserveDnsStatus);
+        }
     }
 
-    private async Task RefreshSettingsSectionAsync()
+    private async Task RefreshSettingsSectionAsync(bool forceRefresh = false)
     {
-        await RefreshUpdateStatusAsync();
+        await RefreshUpdateStatusAsync(forceRefresh);
     }
 
-    private async Task RefreshUpdateStatusAsync()
+    private async Task RefreshUpdateStatusAsync(bool forceRefresh = false)
     {
         if (IsUpdateBusy)
         {
+            return;
+        }
+
+        if (!forceRefresh &&
+            _lastAppUpdateSnapshot is not null &&
+            DateTime.UtcNow - _lastUpdateRefreshCompletedUtc < UpdateRefreshCacheDuration)
+        {
+            ApplyUpdateSnapshot(_lastAppUpdateSnapshot);
             return;
         }
 
@@ -3903,6 +5333,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var snapshot = await _updateService.GetLatestReleaseAsync();
             _lastAppUpdateSnapshot = snapshot;
+            _lastUpdateRefreshCompletedUtc = DateTime.UtcNow;
             ApplyUpdateSnapshot(snapshot);
 
             if (snapshot.IsUpdateAvailable)
@@ -3932,26 +5363,58 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private async Task RefreshSetupStatusAsync()
+    private async Task<bool> RefreshSetupStatusAsync(bool forceRefresh = false)
     {
         if (IsSetupBusy)
         {
-            return;
+            return false;
+        }
+
+        if (!forceRefresh)
+        {
+            var fallbackInterval = IsSetupRefreshBoostActive
+                ? SetupRefreshBusyInterval
+                : SetupRefreshFallbackInterval;
+
+            if (!_setupRefreshPending &&
+                _lastSetupRefreshCompletedUtc != DateTime.MinValue &&
+                DateTime.UtcNow - _lastSetupRefreshCompletedUtc < fallbackInterval)
+            {
+                return false;
+            }
         }
 
         IsSetupBusy = true;
         SetSetupStatus("#F8E7D6", Strings["SetupStatusChecking"]);
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
+            if (forceRefresh)
+            {
+                _environmentService.InvalidateSnapshotCaches();
+            }
+
             var snapshot = await Task.Run(_environmentService.GetEnvironmentSnapshot);
             _lastEnvironmentSnapshot = snapshot;
+            _lastSetupRefreshCompletedUtc = DateTime.UtcNow;
+            _setupRefreshPending = false;
             ApplySetupSnapshot(snapshot);
-            SetSetupStatus("#F8E7D6", Strings["SetupStatusChecked"]);
+            SetSetupStatus(
+                "#F8E7D6",
+                IsSetupRefreshBoostActive
+                    ? Strings["SetupStatusCheckedWatching"]
+                    : Strings["SetupStatusChecked"]);
+            _logService.Info(
+                nameof(MainWindow),
+                $"Setup status refreshed in {stopwatch.ElapsedMilliseconds} ms. Force={forceRefresh}; Boost={IsSetupRefreshBoostActive}.");
+            return true;
         }
         catch (Exception exception)
         {
             SetSetupStatus("#FFD6D6", Strings.Format("SetupStatusFailed", exception.Message));
+            MarkSetupRefreshPending();
+            return false;
         }
         finally
         {
@@ -4078,6 +5541,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 snapshot.CodexAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
                 snapshot.CodexAvailable ? snapshot.CodexVersion : Strings["SetupDetailCodexMissing"],
                 snapshot.CodexAvailable));
+        SetupCodexChecks.Add(
+            CreateSetupCheckItem(
+                Strings["SetupCheckOpenCode"],
+                snapshot.OpenCodeAvailable ? Strings["SetupBadgeInstalled"] : Strings["SetupBadgeMissing"],
+                snapshot.OpenCodeAvailable ? snapshot.OpenCodeDetail : Strings["SetupDetailOpenCodeMissing"],
+                snapshot.OpenCodeAvailable));
         SetupLocalAiChecks.Add(
             CreateSetupCheckItem(
                 Strings["SetupCheckOllamaApp"],
@@ -4167,8 +5636,223 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanOpenOpenClawConfig));
         OnPropertyChanged(nameof(OpenClawDetectedConfigText));
         OnPropertyChanged(nameof(OpenClawRecommendationText));
+        OnPropertyChanged(nameof(CanInstallOpenCode));
+        OnPropertyChanged(nameof(CanLaunchOpenCode));
+        OnPropertyChanged(nameof(CanUninstallOpenCode));
+        OnPropertyChanged(nameof(OpenCodeSetupDetailText));
         OnPropertyChanged(nameof(CanUninstallOllama));
         OnPropertyChanged(nameof(CanUninstallLmStudio));
+        RefreshSetupOverviewBindings();
+    }
+
+    private void RefreshSetupOverviewBindings()
+    {
+        OnPropertyChanged(nameof(SetupLiveStatusHintText));
+        OnPropertyChanged(nameof(SetupRecommendedNextStepText));
+        OnPropertyChanged(nameof(SetupCoreProgressText));
+        OnPropertyChanged(nameof(SetupCodexProgressText));
+        OnPropertyChanged(nameof(SetupLocalAiProgressText));
+        OnPropertyChanged(nameof(SetupCoreNextStepText));
+        OnPropertyChanged(nameof(SetupCodexNextStepText));
+        OnPropertyChanged(nameof(SetupLocalAiNextStepText));
+        OnPropertyChanged(nameof(SetupCoreSummaryBrush));
+        OnPropertyChanged(nameof(SetupCodexSummaryBrush));
+        OnPropertyChanged(nameof(SetupLocalAiSummaryBrush));
+    }
+
+    private string GetSetupSectionProgressText(int readyCount, int totalCount)
+    {
+        if (_lastEnvironmentSnapshot is null)
+        {
+            return Strings["SetupOverviewUnavailable"];
+        }
+
+        return Strings.Format("SetupOverviewReadyFormat", readyCount, totalCount);
+    }
+
+    private static int GetCoreReadyCount(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        var ready = 0;
+        ready += snapshot.WingetAvailable ? 1 : 0;
+        ready += snapshot.NodeAvailable ? 1 : 0;
+        ready += snapshot.NpmAvailable ? 1 : 0;
+        ready += snapshot.GitAvailable ? 1 : 0;
+        return ready;
+    }
+
+    private static int GetCodexReadyCount(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        var ready = 0;
+        ready += snapshot.CodexDesktopAppAvailable ? 1 : 0;
+        ready += snapshot.CodexAvailable ? 1 : 0;
+        ready += snapshot.OpenCodeAvailable ? 1 : 0;
+        ready += snapshot.LoggedIn ? 1 : 0;
+        ready += snapshot.SessionsFolderExists ? 1 : 0;
+        return ready;
+    }
+
+    private static int GetLocalAiReadyCount(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        var ready = 0;
+        ready += snapshot.OllamaAppAvailable ? 1 : 0;
+        ready += snapshot.OllamaServerRunning ? 1 : 0;
+        ready += snapshot.OllamaModelCount > 0 ? 1 : 0;
+        ready += snapshot.OpenClawAvailable && snapshot.OpenClawNodeInstalled ? 1 : 0;
+        return ready;
+    }
+
+    private static string GetSetupSummaryBrush(int readyCount, int totalCount)
+    {
+        if (readyCount >= totalCount)
+        {
+            return "#1F7A52";
+        }
+
+        if (readyCount > 0)
+        {
+            return "#B86E10";
+        }
+
+        return "#B42318";
+    }
+
+    private string GetSetupRecommendedNextStepText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupRecommendedNextStepPending"];
+        }
+
+        var coreNext = GetSetupCoreNextStepText(snapshot);
+
+        if (!string.Equals(coreNext, Strings["SetupNextCoreDone"], StringComparison.Ordinal))
+        {
+            return coreNext;
+        }
+
+        var codexNext = GetSetupCodexNextStepText(snapshot);
+
+        if (!string.Equals(codexNext, Strings["SetupNextCodexDone"], StringComparison.Ordinal))
+        {
+            return codexNext;
+        }
+
+        return GetSetupLocalAiNextStepText(snapshot);
+    }
+
+    private string GetSetupCoreNextStepText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupRecommendedNextStepPending"];
+        }
+
+        if (!snapshot.WingetAvailable)
+        {
+            return Strings["SetupNextCoreRepairWinget"];
+        }
+
+        if (!snapshot.NodeAvailable)
+        {
+            return Strings["SetupNextCoreInstallNode"];
+        }
+
+        if (!snapshot.NpmAvailable)
+        {
+            return Strings["SetupNextCoreRepairNpm"];
+        }
+
+        if (!snapshot.GitAvailable)
+        {
+            return Strings["SetupNextCoreInstallGit"];
+        }
+
+        return Strings["SetupNextCoreDone"];
+    }
+
+    private string GetSetupCodexNextStepText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupRecommendedNextStepPending"];
+        }
+
+        if (!snapshot.CodexDesktopAppAvailable)
+        {
+            return Strings["SetupNextCodexInstallDesktop"];
+        }
+
+        if (!snapshot.CodexAvailable)
+        {
+            return Strings["SetupNextCodexInstallCli"];
+        }
+
+        if (!snapshot.LoggedIn)
+        {
+            return Strings["SetupNextCodexLogin"];
+        }
+
+        if (!snapshot.SessionsFolderExists)
+        {
+            return Strings["SetupNextCodexOpenFirstSession"];
+        }
+
+        if (!snapshot.OpenCodeAvailable)
+        {
+            return Strings["SetupNextCodexInstallOpenCode"];
+        }
+
+        return Strings["SetupNextCodexDone"];
+    }
+
+    private string GetSetupLocalAiNextStepText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupRecommendedNextStepPending"];
+        }
+
+        if (!snapshot.OllamaAppAvailable)
+        {
+            return Strings["SetupNextLocalInstallOllama"];
+        }
+
+        if (!snapshot.OllamaServerRunning)
+        {
+            return Strings["SetupNextLocalStartOllama"];
+        }
+
+        if (snapshot.OllamaModelCount == 0)
+        {
+            return Strings["SetupNextLocalInstallStarterModel"];
+        }
+
+        if (!snapshot.OpenClawAvailable)
+        {
+            return Strings["SetupNextLocalInstallOpenClaw"];
+        }
+
+        if (!snapshot.OpenClawNodeInstalled)
+        {
+            return Strings["SetupNextLocalInstallOpenClawNode"];
+        }
+
+        return Strings["SetupNextLocalDone"];
     }
 
     private static SetupCheckItem CreateSetupCheckItem(
@@ -4209,9 +5893,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return $"\"{value.Replace("\"", "\"\"")}\"";
     }
 
-    private async Task RefreshSessionsAsync(bool isAutomaticRefresh)
+    private async Task RefreshSessionsAsync(bool isAutomaticRefresh, bool forceRefresh = false)
     {
+        EnsureSessionWatchersInitialized();
+
         if (_isRefreshing)
+        {
+            return;
+        }
+
+        if (!forceRefresh &&
+            !_sessionRefreshPending &&
+            _lastSessionRefreshCompletedUtc != DateTime.MinValue &&
+            DateTime.UtcNow - _lastSessionRefreshCompletedUtc < SessionRefreshFallbackInterval)
         {
             return;
         }
@@ -4225,6 +5919,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _isRefreshing = true;
         IsLoading = true;
         SetStatus("#F8E7D6", isAutomaticRefresh ? "StatusRefreshing" : "StatusReading");
+        var stopwatch = Stopwatch.StartNew();
 
         try
         {
@@ -4232,16 +5927,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var refreshedSessions = await Task.Run(() => _sessionService.GetSessions(currentLanguage));
             ApplySessions(refreshedSessions);
 
+            _lastSessionRefreshCompletedUtc = DateTime.UtcNow;
+            _sessionRefreshPending = false;
             _lastUpdatedAtLocal = DateTime.Now;
             LastUpdatedText = Strings.Format("LastUpdated", _lastUpdatedAtLocal.Value.ToString("dd.MM.yyyy HH:mm:ss"));
             SetStatus(
                 "#F8E7D6",
                 refreshedSessions.Count == 0 ? "StatusNoSessions" : "StatusLoadedCount",
                 refreshedSessions.Count);
+            _logService.Info(
+                nameof(MainWindow),
+                $"Sessions refreshed in {stopwatch.ElapsedMilliseconds} ms. Force={forceRefresh}; Auto={isAutomaticRefresh}; Count={refreshedSessions.Count}.");
         }
         catch (Exception exception)
         {
             SetStatus("#FFD6D6", "StatusError", exception.Message);
+            MarkSessionsRefreshPending();
         }
         finally
         {
@@ -4264,7 +5965,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void UpdateSetupRefreshTimer()
     {
-        if (SelectedAppSection == AppSection.Setup && IsActive)
+        ExpireSetupRefreshBoostIfNeeded();
+        _setupRefreshTimer.Interval = IsSetupRefreshBoostActive ? SetupRefreshBusyInterval : SetupRefreshNormalInterval;
+
+        if ((SelectedAppSection == AppSection.Setup || IsSetupRefreshBoostActive) && IsActive)
         {
             _setupRefreshTimer.Start();
         }
@@ -4286,6 +5990,39 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Height = Math.Min(Height, availableHeight);
         Left = workArea.Left + Math.Max((workArea.Width - Width) / 2, 0);
         Top = workArea.Top + Math.Max((workArea.Height - Height) / 2, 0);
+    }
+
+    private bool IsCompactWindowLayout =>
+        ActualWidth > 0 && ActualWidth < 1320;
+
+    private bool IsWideWindowLayout =>
+        WindowState == WindowState.Maximized || ActualWidth >= 1720;
+
+    private void ScheduleAdaptiveLayoutRefresh()
+    {
+        if (!IsLoaded)
+        {
+            RefreshAdaptiveLayoutBindings();
+            return;
+        }
+
+        _layoutRefreshTimer.Stop();
+        _layoutRefreshTimer.Start();
+    }
+
+    private void RefreshAdaptiveLayoutBindings()
+    {
+        OnPropertyChanged(nameof(AppOuterMargin));
+        OnPropertyChanged(nameof(AppContentMaxWidth));
+        OnPropertyChanged(nameof(AppContentWidth));
+        OnPropertyChanged(nameof(ShellSidebarColumnWidth));
+        OnPropertyChanged(nameof(ShellMainGapColumnWidth));
+        OnPropertyChanged(nameof(SectionRailGapColumnWidth));
+        OnPropertyChanged(nameof(SessionsHeaderSearchColumnWidth));
+        OnPropertyChanged(nameof(SessionsActionButtonColumnWidth));
+        OnPropertyChanged(nameof(SessionsDetailColumnWidth));
+        OnPropertyChanged(nameof(NewSessionAsideColumnWidth));
+        OnPropertyChanged(nameof(SettingsAsideColumnWidth));
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

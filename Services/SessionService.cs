@@ -9,6 +9,10 @@ namespace LaptopSessionViewer.Services;
 
 public sealed class SessionService
 {
+    private const long LargeSessionIncrementalThresholdBytes = 25L * 1024L * 1024L;
+    private const long TranscriptTailReadBytes = 4L * 1024L * 1024L;
+    private const int MaxTranscriptCharacters = 240_000;
+
     private static readonly string CodexHomePath =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
 
@@ -96,6 +100,50 @@ public sealed class SessionService
         DeleteEmptyParentDirectories(Path.GetDirectoryName(session.FilePath));
     }
 
+    public CodexSessionConversation GetConversation(SessionRecord session)
+    {
+        if (!File.Exists(session.FilePath))
+        {
+            throw new FileNotFoundException("Session file not found.", session.FilePath);
+        }
+
+        var threadTitles = LoadThreadTitlesSnapshot();
+        var file = new FileInfo(session.FilePath);
+        return ParseConversationFile(file, threadTitles.Titles, session);
+    }
+
+    public string LoadTranscriptText(SessionRecord session, AppLanguage language = AppLanguage.English)
+    {
+        if (!File.Exists(session.FilePath))
+        {
+            return GetLocalizedText(language, "NoTranscriptFound");
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.TranscriptText))
+        {
+            return session.TranscriptText;
+        }
+
+        try
+        {
+            var transcript = BuildTranscriptText(session.FilePath, language);
+            session.TranscriptText = transcript;
+            return transcript;
+        }
+        catch (IOException)
+        {
+            var lockedText = GetLocalizedText(language, "LockedTranscript");
+            session.TranscriptText = lockedText;
+            return lockedText;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            var lockedText = GetLocalizedText(language, "LockedTranscript");
+            session.TranscriptText = lockedText;
+            return lockedText;
+        }
+    }
+
     private ThreadTitleCacheEntry LoadThreadTitlesSnapshot()
     {
         if (!File.Exists(SessionIndexPath))
@@ -149,18 +197,70 @@ public sealed class SessionService
         ThreadTitleCacheEntry threadTitles,
         out SessionRecord session)
     {
-        if (_sessionCache.TryGetValue(cacheKey, out var cacheEntry) &&
-            cacheEntry.FileLastWriteTicks == file.LastWriteTimeUtc.Ticks &&
-            cacheEntry.FileLength == file.Length &&
-            cacheEntry.ThreadTitleVersionTicks == threadTitles.VersionTicks &&
-            cacheEntry.ThreadTitleVersionLength == threadTitles.VersionLength)
+        if (!_sessionCache.TryGetValue(cacheKey, out var cacheEntry) ||
+            cacheEntry.ThreadTitleVersionTicks != threadTitles.VersionTicks ||
+            cacheEntry.ThreadTitleVersionLength != threadTitles.VersionLength)
+        {
+            session = null!;
+            return false;
+        }
+
+        if (cacheEntry.FileLastWriteTicks == file.LastWriteTimeUtc.Ticks &&
+            cacheEntry.FileLength == file.Length)
         {
             session = cacheEntry.Session;
             return true;
         }
 
+        if (file.Length >= LargeSessionIncrementalThresholdBytes &&
+            file.Length >= cacheEntry.FileLength)
+        {
+            session = CreateLargeFileCachedSession(cacheEntry.Session, file, cacheKey.Language);
+            _sessionCache[cacheKey] = cacheEntry with
+            {
+                FileLastWriteTicks = file.LastWriteTimeUtc.Ticks,
+                FileLength = file.Length,
+                Session = session
+            };
+            return true;
+        }
+
         session = null!;
         return false;
+    }
+
+    private static SessionRecord CreateLargeFileCachedSession(
+        SessionRecord cachedSession,
+        FileInfo file,
+        AppLanguage language)
+    {
+        var updatedAt = new DateTimeOffset(file.LastWriteTimeUtc);
+        var baseSearchBlob = cachedSession.BaseSearchBlob;
+
+        return new SessionRecord
+        {
+            SessionId = cachedSession.SessionId,
+            Title = cachedSession.Title,
+            Preview = cachedSession.Preview,
+            LastMessagePreview = cachedSession.LastMessagePreview,
+            StartedAtText = cachedSession.StartedAtText,
+            UpdatedAtText = updatedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss"),
+            DurationText = cachedSession.DurationText,
+            WorkingDirectory = cachedSession.WorkingDirectory,
+            Source = cachedSession.Source,
+            ModelProvider = cachedSession.ModelProvider,
+            CliVersion = cachedSession.CliVersion,
+            FilePath = cachedSession.FilePath,
+            RelativePath = cachedSession.RelativePath,
+            TranscriptText = string.Empty,
+            UserMessageCount = cachedSession.UserMessageCount,
+            AssistantMessageCount = cachedSession.AssistantMessageCount,
+            ToolCallCount = cachedSession.ToolCallCount,
+            TotalMessageCount = cachedSession.TotalMessageCount,
+            UpdatedAtUtc = updatedAt.UtcDateTime,
+            BaseSearchBlob = baseSearchBlob,
+            SearchBlob = baseSearchBlob
+        };
     }
 
     private void CleanupSessionCache(HashSet<SessionCacheKey> activeKeys)
@@ -198,8 +298,6 @@ public sealed class SessionService
         var userMessageCount = 0;
         var assistantMessageCount = 0;
         var toolCallCount = 0;
-        var transcript = new StringBuilder();
-
         foreach (var line in File.ReadLines(file.FullName, Encoding.UTF8))
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -274,9 +372,7 @@ public sealed class SessionService
                 {
                     assistantMessageCount++;
                 }
-
                 lastMessage = text;
-                AppendTranscriptLine(transcript, lineTimestamp, role, text);
             }
             catch (JsonException)
             {
@@ -292,11 +388,11 @@ public sealed class SessionService
         var startedLocal = startedAt?.ToLocalTime();
         var updatedLocal = updatedAt.ToLocalTime();
         var title = ChooseTitle(titleFromIndex, firstPrompt, file.Name);
-        var transcriptText = transcript.Length == 0
-            ? GetLocalizedText(language, "NoTranscriptFound")
-            : transcript.ToString().Trim();
         var totalMessageCount = userMessageCount + assistantMessageCount;
         var unknownText = GetLocalizedText(language, "Unknown");
+        var transcriptText = totalMessageCount == 0
+            ? GetLocalizedText(language, "NoTranscriptFound")
+            : string.Empty;
 
         var baseSearchBlob = BuildSearchBlob(
             title,
@@ -333,6 +429,124 @@ public sealed class SessionService
             BaseSearchBlob = baseSearchBlob,
             SearchBlob = baseSearchBlob
         };
+    }
+
+    private static string BuildTranscriptText(string filePath, AppLanguage language)
+    {
+        var fileInfo = new FileInfo(filePath);
+        if (fileInfo.Length > TranscriptTailReadBytes)
+        {
+            return BuildTranscriptTextFromTail(fileInfo, language);
+        }
+
+        return BuildTranscriptTextFromLines(File.ReadLines(filePath, Encoding.UTF8), language, isTailOnly: false);
+    }
+
+    private static string BuildTranscriptTextFromTail(FileInfo file, AppLanguage language)
+    {
+        using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var bytesToRead = (int)Math.Min(TranscriptTailReadBytes, stream.Length);
+        var offset = Math.Max(0, stream.Length - bytesToRead);
+        var buffer = new byte[bytesToRead];
+
+        stream.Seek(offset, SeekOrigin.Begin);
+        var bytesRead = stream.Read(buffer, 0, buffer.Length);
+        var text = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+        var lines = text.Split('\n');
+
+        if (offset > 0 && lines.Length > 0)
+        {
+            lines = lines.Skip(1).ToArray();
+        }
+
+        return BuildTranscriptTextFromLines(lines, language, isTailOnly: offset > 0);
+    }
+
+    private static string BuildTranscriptTextFromLines(
+        IEnumerable<string> lines,
+        AppLanguage language,
+        bool isTailOnly)
+    {
+        var transcript = new StringBuilder();
+        var wasTrimmed = false;
+
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                var recordType = GetString(root, "type");
+
+                if (recordType != "response_item" || !TryGetProperty(root, "payload", out var payload))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(GetString(payload, "type"), "message", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var role = GetString(payload, "role");
+
+                if (!string.Equals(role, "user", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var text = RemoveEnvironmentContext(ExtractMessageText(payload));
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                AppendTranscriptLine(
+                    transcript,
+                    ParseTimestamp(GetString(root, "timestamp")),
+                    role,
+                    text);
+                wasTrimmed |= TrimTranscriptBuilder(transcript);
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        if (transcript.Length == 0)
+        {
+            return GetLocalizedText(language, "NoTranscriptFound");
+        }
+
+        var result = transcript.ToString().Trim();
+        if (isTailOnly || wasTrimmed)
+        {
+            var notice = language == AppLanguage.Russian
+                ? "[Показана только последняя часть большого transcript-файла, чтобы AIHelper не зависал.]"
+                : "[Only the latest part of this large transcript file is shown to keep AIHelper responsive.]";
+            result = $"{notice}{Environment.NewLine}{Environment.NewLine}{result}";
+        }
+
+        return result;
+    }
+
+    private static bool TrimTranscriptBuilder(StringBuilder transcript)
+    {
+        if (transcript.Length <= MaxTranscriptCharacters)
+        {
+            return false;
+        }
+
+        var removeLength = transcript.Length - MaxTranscriptCharacters;
+        transcript.Remove(0, removeLength);
+        return true;
     }
 
     private static SessionRecord CreateLockedSessionRecord(FileInfo file, AppLanguage language)
@@ -384,6 +598,121 @@ public sealed class SessionService
 
             break;
         }
+    }
+
+    private static CodexSessionConversation ParseConversationFile(
+        FileInfo file,
+        IReadOnlyDictionary<string, string> titleLookup,
+        SessionRecord sourceSession)
+    {
+        var messages = new List<CodexSessionMessage>();
+        string? sessionId = null;
+        string? titleFromIndex = null;
+        string firstPrompt = string.Empty;
+        string workingDirectory = string.IsNullOrWhiteSpace(sourceSession.WorkingDirectory) || sourceSession.WorkingDirectory == "-"
+            ? string.Empty
+            : sourceSession.WorkingDirectory;
+        string modelProvider = string.IsNullOrWhiteSpace(sourceSession.ModelProvider) || sourceSession.ModelProvider == "-"
+            ? string.Empty
+            : sourceSession.ModelProvider;
+        DateTimeOffset? startedAt = null;
+
+        foreach (var line in File.ReadLines(file.FullName, Encoding.UTF8))
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(line);
+                var root = document.RootElement;
+                var recordType = GetString(root, "type");
+                var lineTimestamp = ParseTimestamp(GetString(root, "timestamp"));
+
+                if (recordType == "session_meta" && TryGetProperty(root, "payload", out var sessionPayload))
+                {
+                    sessionId = GetString(sessionPayload, "id");
+                    titleLookup.TryGetValue(sessionId ?? string.Empty, out titleFromIndex);
+                    startedAt = ParseTimestamp(GetString(sessionPayload, "timestamp")) ?? lineTimestamp;
+
+                    var parsedWorkingDirectory = GetString(sessionPayload, "cwd");
+                    if (!string.IsNullOrWhiteSpace(parsedWorkingDirectory))
+                    {
+                        workingDirectory = parsedWorkingDirectory;
+                    }
+
+                    var parsedModelProvider = GetString(sessionPayload, "model_provider");
+                    if (!string.IsNullOrWhiteSpace(parsedModelProvider))
+                    {
+                        modelProvider = parsedModelProvider;
+                    }
+
+                    continue;
+                }
+
+                if (recordType != "response_item" || !TryGetProperty(root, "payload", out var payload))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(GetString(payload, "type"), "message", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var role = GetString(payload, "role");
+
+                if (!string.Equals(role, "user", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(role, "assistant", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var text = RemoveEnvironmentContext(ExtractMessageText(payload));
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(firstPrompt) &&
+                    string.Equals(role, "user", StringComparison.OrdinalIgnoreCase))
+                {
+                    firstPrompt = text;
+                }
+
+                messages.Add(
+                    new CodexSessionMessage
+                    {
+                        Role = role,
+                        Text = text,
+                        Timestamp = lineTimestamp
+                    });
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        var conversationTitle = !string.IsNullOrWhiteSpace(sourceSession.DisplayTitle)
+            ? sourceSession.DisplayTitle
+            : ChooseTitle(titleFromIndex, firstPrompt, file.Name);
+        var updatedAt = new DateTimeOffset(file.LastWriteTimeUtc);
+
+        return new CodexSessionConversation
+        {
+            SessionId = string.IsNullOrWhiteSpace(sessionId) ? sourceSession.SessionId : sessionId,
+            Title = conversationTitle,
+            WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+                : workingDirectory,
+            ModelProvider = modelProvider,
+            StartedAtUtc = startedAt,
+            UpdatedAtUtc = updatedAt,
+            Messages = messages
+        };
     }
 
     private static string DeriveSessionId(string fileName)

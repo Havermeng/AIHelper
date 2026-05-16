@@ -17,11 +17,16 @@ public sealed class CodexEnvironmentService
     private const string CodexDesktopStoreSource = "msstore";
     private const string CodexDesktopStoreUrl = "ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS";
     private const string CodexDesktopWebUrl = "https://apps.microsoft.com/detail/9plm9xgg6vks";
+    private const string OpenCodeNpmPackageId = "opencode-ai";
+    private const string OpenCodeDocsUrl = "https://opencode.ai/docs/";
     private const string OllamaWingetId = "Ollama.Ollama";
     private const string OllamaWindowsDownloadUrl = "https://ollama.com/download/windows";
     private const string LmStudioWingetId = "ElementLabs.LMStudio";
     private const string ComfyUiDesktopWingetId = "Comfy.ComfyUI-Desktop";
     private const string PinokioWingetId = "pinokiocomputer.pinokio";
+    private static readonly TimeSpan ExecutablePathCacheDuration = TimeSpan.FromSeconds(8);
+    private static readonly TimeSpan SnapshotCommandCacheDuration = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan WingetPackageCacheDuration = TimeSpan.FromSeconds(8);
     private static readonly HashSet<string> ManagedCreativeToolPackages =
     [
         ComfyUiDesktopWingetId,
@@ -35,10 +40,18 @@ public sealed class CodexEnvironmentService
         "gpt-5.3-codex-spark",
         "gpt-5.2"
     ];
+    private readonly object _cacheLock = new();
+    private readonly Dictionary<string, CachedCommandResult> _commandCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CachedStringValue> _pathCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CachedWingetPackageValue> _wingetPackageCache = new(StringComparer.OrdinalIgnoreCase);
 
     public string CodexCommandPath =>
-        ResolveCodexExecutablePath() ??
+        GetCachedPath("codex-command-path", ResolveCodexExecutablePath) ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "codex.cmd");
+
+    public string OpenCodeCommandPath =>
+        GetCachedPath("opencode-command-path", ResolveOpenCodeExecutablePath) ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "opencode.cmd");
 
     public string SessionsFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
@@ -55,42 +68,109 @@ public sealed class CodexEnvironmentService
     public string OpenClawConfigFilePath =>
         Path.Combine(OpenClawHomeFolder, "openclaw.json");
 
+    public void InvalidateSnapshotCaches()
+    {
+        lock (_cacheLock)
+        {
+            _commandCache.Clear();
+            _pathCache.Clear();
+            _wingetPackageCache.Clear();
+        }
+    }
+
     public CodexEnvironmentSnapshot GetEnvironmentSnapshot()
     {
-        var winget = RunCommand("cmd.exe", "/c winget --version");
-        var node = RunCommand("cmd.exe", "/c node --version");
-        var npm = RunCommand("cmd.exe", "/c npm --version");
-        var git = RunCommand("cmd.exe", "/c git --version");
-        var codexDesktopPackage = GetInstalledWingetPackageInfo(CodexDesktopStoreId, sourceName: CodexDesktopStoreSource);
-
-        var codexVersion = File.Exists(CodexCommandPath)
-            ? RunCommand("cmd.exe", $"/c \"\"{CodexCommandPath}\" --version\"")
-            : CommandResult.Missing;
-
-        var loginStatus = File.Exists(CodexCommandPath)
-            ? RunCommand("cmd.exe", $"/c \"\"{CodexCommandPath}\" login status\"")
-            : CommandResult.Missing;
-        var ollamaCommandPath = ResolveExecutableOnPath("ollama.exe");
-        var ollamaPath = ResolveOllamaExecutablePath();
-        var ollamaAppPath = ResolveOllamaAppExecutablePath();
-        var lmStudioPath = ResolveLmStudioExecutablePath();
-        var openClawPath = ResolveOpenClawExecutablePath();
+        var codexCommandPath = CodexCommandPath;
+        var openCodePath = GetCachedPath("opencode-executable-path", ResolveOpenCodeExecutablePath);
+        var ollamaCommandPath = GetCachedPath("ollama-command-path", () => ResolveExecutableOnPath("ollama.exe"));
+        var ollamaPath = GetCachedPath("ollama-executable-path", ResolveOllamaExecutablePath);
+        var ollamaAppPath = GetCachedPath("ollama-app-path", ResolveOllamaAppExecutablePath);
+        var lmStudioPath = GetCachedPath("lmstudio-path", ResolveLmStudioExecutablePath);
+        var openClawPath = GetCachedPath("openclaw-path", ResolveOpenClawExecutablePath);
         var openClawConfig = ReadOpenClawConfig(OpenClawConfigFilePath);
-        var openClawNodeStatus = !string.IsNullOrWhiteSpace(openClawPath)
-            ? RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" node status\"", timeoutMilliseconds: 7000)
-            : CommandResult.Missing;
-        var openClawBrowserStatus = !string.IsNullOrWhiteSpace(openClawPath)
-            ? RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" browser status\"", timeoutMilliseconds: 7000)
-            : CommandResult.Missing;
-        var comfyUiPackage = GetInstalledWingetPackageInfo(ComfyUiDesktopWingetId);
-        var pinokioPackage = GetInstalledWingetPackageInfo(PinokioWingetId);
-        var ollamaVersion = !string.IsNullOrWhiteSpace(ollamaPath)
-            ? RunCommand("cmd.exe", $"/c \"\"{ollamaPath}\" --version\"")
-            : CommandResult.Missing;
-        var openClawVersion = !string.IsNullOrWhiteSpace(openClawPath)
-            ? RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" --version\"")
-            : CommandResult.Missing;
-        var installedOllamaModels = GetInstalledOllamaModels(ollamaPath);
+
+        var wingetTask = Task.Run(() => GetCachedCommandResult("cmd:winget:version", SnapshotCommandCacheDuration, () =>
+            RunCommand("cmd.exe", "/c winget --version")));
+        var nodeTask = Task.Run(() => GetCachedCommandResult("cmd:node:version", SnapshotCommandCacheDuration, () =>
+            RunCommand("cmd.exe", "/c node --version")));
+        var npmTask = Task.Run(() => GetCachedCommandResult("cmd:npm:version", SnapshotCommandCacheDuration, () =>
+            RunCommand("cmd.exe", "/c npm --version")));
+        var gitTask = Task.Run(() => GetCachedCommandResult("cmd:git:version", SnapshotCommandCacheDuration, () =>
+            RunCommand("cmd.exe", "/c git --version")));
+        var codexDesktopPackageTask = Task.Run(() => GetCachedWingetPackageInfo(
+            $"winget:{CodexDesktopStoreId}:{CodexDesktopStoreSource}",
+            WingetPackageCacheDuration,
+            () => GetInstalledWingetPackageInfo(CodexDesktopStoreId, sourceName: CodexDesktopStoreSource)));
+        var codexVersionTask = Task.Run(() => File.Exists(codexCommandPath)
+            ? GetCachedCommandResult($"cmd:codex:version:{codexCommandPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{codexCommandPath}\" --version\""))
+            : CommandResult.Missing);
+        var openCodeVersionTask = Task.Run(() => !string.IsNullOrWhiteSpace(openCodePath)
+            ? GetCachedCommandResult($"cmd:opencode:version:{openCodePath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{openCodePath}\" --version\""))
+            : CommandResult.Missing);
+        var loginStatusTask = Task.Run(() => File.Exists(codexCommandPath)
+            ? GetCachedCommandResult($"cmd:codex:login-status:{codexCommandPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{codexCommandPath}\" login status\""))
+            : CommandResult.Missing);
+        var openClawNodeStatusTask = Task.Run(() => !string.IsNullOrWhiteSpace(openClawPath)
+            ? GetCachedCommandResult($"cmd:openclaw:node-status:{openClawPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" node status\"", timeoutMilliseconds: 7000))
+            : CommandResult.Missing);
+        var openClawBrowserStatusTask = Task.Run(() => !string.IsNullOrWhiteSpace(openClawPath)
+            ? GetCachedCommandResult($"cmd:openclaw:browser-status:{openClawPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" browser status\"", timeoutMilliseconds: 7000))
+            : CommandResult.Missing);
+        var comfyUiPackageTask = Task.Run(() => GetCachedWingetPackageInfo(
+            $"winget:{ComfyUiDesktopWingetId}:default",
+            WingetPackageCacheDuration,
+            () => GetInstalledWingetPackageInfo(ComfyUiDesktopWingetId)));
+        var pinokioPackageTask = Task.Run(() => GetCachedWingetPackageInfo(
+            $"winget:{PinokioWingetId}:default",
+            WingetPackageCacheDuration,
+            () => GetInstalledWingetPackageInfo(PinokioWingetId)));
+        var ollamaVersionTask = Task.Run(() => !string.IsNullOrWhiteSpace(ollamaPath)
+            ? GetCachedCommandResult($"cmd:ollama:version:{ollamaPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{ollamaPath}\" --version\""))
+            : CommandResult.Missing);
+        var openClawVersionTask = Task.Run(() => !string.IsNullOrWhiteSpace(openClawPath)
+            ? GetCachedCommandResult($"cmd:openclaw:version:{openClawPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" --version\""))
+            : CommandResult.Missing);
+        var installedOllamaModelsTask = Task.Run(() => GetCachedOllamaModels(ollamaPath));
+
+        Task.WaitAll(
+            wingetTask,
+            nodeTask,
+            npmTask,
+            gitTask,
+            codexDesktopPackageTask,
+            codexVersionTask,
+            openCodeVersionTask,
+            loginStatusTask,
+            openClawNodeStatusTask,
+            openClawBrowserStatusTask,
+            comfyUiPackageTask,
+            pinokioPackageTask,
+            ollamaVersionTask,
+            openClawVersionTask,
+            installedOllamaModelsTask);
+
+        var winget = wingetTask.Result;
+        var node = nodeTask.Result;
+        var npm = npmTask.Result;
+        var git = gitTask.Result;
+        var codexDesktopPackage = codexDesktopPackageTask.Result;
+        var codexVersion = codexVersionTask.Result;
+        var openCodeVersion = openCodeVersionTask.Result;
+        var loginStatus = loginStatusTask.Result;
+        var openClawNodeStatus = openClawNodeStatusTask.Result;
+        var openClawBrowserStatus = openClawBrowserStatusTask.Result;
+        var comfyUiPackage = comfyUiPackageTask.Result;
+        var pinokioPackage = pinokioPackageTask.Result;
+        var ollamaVersion = ollamaVersionTask.Result;
+        var openClawVersion = openClawVersionTask.Result;
+        var installedOllamaModels = installedOllamaModelsTask.Result;
         var ollamaServerRunning = !string.IsNullOrWhiteSpace(ollamaPath) && IsLocalTcpEndpointReachable(11434);
         var ollamaTrayRunning = IsAnyProcessRunning("ollama");
         var ollamaModelsSummary = BuildOllamaModelsSummary(installedOllamaModels);
@@ -112,6 +192,11 @@ public sealed class CodexEnvironmentService
             CodexDesktopAppDetail = codexDesktopPackage.Detail,
             CodexAvailable = codexVersion.Success,
             CodexVersion = codexVersion.Output,
+            OpenCodeAvailable = !string.IsNullOrWhiteSpace(openCodePath),
+            OpenCodeVersion = openCodeVersion.Output,
+            OpenCodeDetail = !string.IsNullOrWhiteSpace(openCodePath)
+                ? BuildOpenCodeDetail(openCodeVersion, openCodePath)
+                : "OpenCode is not installed yet. Install it below to continue Codex sessions there.",
             LoggedIn =
                 loginStatus.Success &&
                 loginStatus.Output.Contains("logged in", StringComparison.OrdinalIgnoreCase),
@@ -260,25 +345,29 @@ public sealed class CodexEnvironmentService
 
     public string BuildInteractiveCommandPreview(NewSessionLaunchOptions options)
     {
-        var args = BuildInteractiveArguments(options);
+        var args = BuildInteractiveArguments(options, options.WorkingDirectory);
         return string.IsNullOrWhiteSpace(args) ? "codex" : $"codex {args}";
     }
 
     public void LaunchInteractiveSession(NewSessionLaunchOptions options)
     {
-        var workingDirectory = Directory.Exists(options.WorkingDirectory)
-            ? options.WorkingDirectory
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var workingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
+            options.WorkingDirectory,
+            Guid.NewGuid().ToString("N"),
+            string.IsNullOrWhiteSpace(options.Prompt) ? "New Codex Session" : options.Prompt,
+            out _);
 
-        var arguments = BuildInteractiveArguments(options);
+        var arguments = BuildInteractiveArguments(options, workingDirectory);
         StartCodexProcess(arguments, workingDirectory);
     }
 
     public void LaunchResumeSession(string sessionId, string workingDirectory, IReadOnlyList<string>? imagePaths = null)
     {
-        var normalizedWorkingDirectory = Directory.Exists(workingDirectory)
-            ? workingDirectory
-            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var normalizedWorkingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
+            workingDirectory,
+            sessionId,
+            "Resumed Codex Session",
+            out _);
 
         var arguments = new List<string>
         {
@@ -333,6 +422,64 @@ public sealed class CodexEnvironmentService
             new ProcessStartInfo
             {
                 FileName = CodexDesktopWebUrl,
+                UseShellExecute = true
+            });
+    }
+
+    public void LaunchOpenCodeInstallTerminal()
+    {
+        var scriptPath = CreateTempScriptPath("aihelper-install-opencode");
+        File.WriteAllText(scriptPath, BuildOpenCodeInstallScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoLogo -NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true
+            });
+    }
+
+    public void LaunchOpenCodeUninstallTerminal()
+    {
+        var scriptPath = CreateTempScriptPath("aihelper-uninstall-opencode");
+        File.WriteAllText(scriptPath, BuildOpenCodeUninstallScript(), Encoding.UTF8);
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoLogo -NoExit -ExecutionPolicy Bypass -File {QuoteForCommandLine(scriptPath)}",
+                UseShellExecute = true
+            });
+    }
+
+    public void LaunchOpenCodeTerminal()
+    {
+        var openCodePath = ResolveOpenCodeExecutablePath();
+
+        if (string.IsNullOrWhiteSpace(openCodePath))
+        {
+            throw new FileNotFoundException("OpenCode CLI was not found.");
+        }
+
+        var invocation = BuildOpenCodeInvocation(openCodePath, string.Empty);
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/k {invocation}",
+                WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                UseShellExecute = true
+            });
+    }
+
+    public void OpenOpenCodeDocsPage()
+    {
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = OpenCodeDocsUrl,
                 UseShellExecute = true
             });
     }
@@ -633,12 +780,12 @@ public sealed class CodexEnvironmentService
             });
     }
 
-    private string BuildInteractiveArguments(NewSessionLaunchOptions options)
+    private string BuildInteractiveArguments(NewSessionLaunchOptions options, string workingDirectory)
     {
         var arguments = new List<string>
         {
             "-C",
-            QuoteForCommandLine(options.WorkingDirectory)
+            QuoteForCommandLine(workingDirectory)
         };
 
         foreach (var imagePath in options.ImagePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
@@ -939,6 +1086,165 @@ catch {
 Write-Host ''
 Write-Host 'The official Codex desktop app page was opened.' -ForegroundColor Green
 Write-Host 'Install the app there, then return to AIHelper and refresh the Codex section.' -ForegroundColor Green
+""";
+    }
+
+    private static string BuildOpenCodeInstallScript()
+    {
+        return $$"""
+$ErrorActionPreference = 'Stop'
+
+function Resolve-NpmCommand {
+    $command = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $command = Get-Command npm -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $fallback = Join-Path ${env:ProgramFiles} 'nodejs\npm.cmd'
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    return $null
+}
+
+function Add-UserPathEntryIfMissing([string]$PathEntry) {
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $existingEntries = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($userPath)) {
+        $existingEntries = $userPath.Split(';') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    }
+
+    if ($existingEntries -contains $PathEntry) {
+        return
+    }
+
+    $newUserPath = if ([string]::IsNullOrWhiteSpace($userPath)) {
+        $PathEntry
+    } else {
+        "$userPath;$PathEntry"
+    }
+
+    [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+    $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $newUserPath
+}
+
+function Resolve-OpenCodeCommand {
+    $command = Get-Command opencode.cmd -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $command = Get-Command opencode -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $fallback = Join-Path ${env:APPDATA} 'npm\opencode.cmd'
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    return $null
+}
+
+$npmCmd = Resolve-NpmCommand
+if (-not $npmCmd) {
+    throw 'npm was not found. Install Node.js first in AIHelper, then retry OpenCode installation.'
+}
+
+Write-Host ''
+Write-Host '== Installing OpenCode ==' -ForegroundColor Cyan
+Write-Host 'Official package source: npm (opencode-ai).' -ForegroundColor Yellow
+Write-Host 'If the terminal stays quiet for a while, wait until npm finishes downloading packages.' -ForegroundColor Yellow
+
+$prevFund = $env:NPM_CONFIG_FUND
+$prevAudit = $env:NPM_CONFIG_AUDIT
+$prevNotifier = $env:NPM_CONFIG_UPDATE_NOTIFIER
+
+try {
+    $env:NPM_CONFIG_FUND = 'false'
+    $env:NPM_CONFIG_AUDIT = 'false'
+    $env:NPM_CONFIG_UPDATE_NOTIFIER = 'false'
+    & $npmCmd install -g {{OpenCodeNpmPackageId}}
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm install finished with exit code $LASTEXITCODE."
+    }
+}
+finally {
+    $env:NPM_CONFIG_FUND = $prevFund
+    $env:NPM_CONFIG_AUDIT = $prevAudit
+    $env:NPM_CONFIG_UPDATE_NOTIFIER = $prevNotifier
+}
+
+$npmPrefix = (& $npmCmd config get prefix 2>$null).Trim()
+if (-not [string]::IsNullOrWhiteSpace($npmPrefix)) {
+    Add-UserPathEntryIfMissing $npmPrefix
+}
+
+$openCodeCmd = Resolve-OpenCodeCommand
+if (-not $openCodeCmd) {
+    throw 'OpenCode was installed, but the opencode command is still not visible. Restart AIHelper or open a new terminal and try again.'
+}
+
+Write-Host ''
+Write-Host 'OpenCode install/update command finished.' -ForegroundColor Green
+Write-Host "Command: $openCodeCmd" -ForegroundColor Green
+Write-Host 'Return to AIHelper and refresh the Codex section.' -ForegroundColor Green
+""";
+    }
+
+    private static string BuildOpenCodeUninstallScript()
+    {
+        return $$"""
+$ErrorActionPreference = 'Stop'
+
+function Resolve-NpmCommand {
+    $command = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $command = Get-Command npm -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $fallback = Join-Path ${env:ProgramFiles} 'nodejs\npm.cmd'
+    if (Test-Path $fallback) {
+        return $fallback
+    }
+
+    return $null
+}
+
+$npmCmd = Resolve-NpmCommand
+if (-not $npmCmd) {
+    throw 'npm was not found, so OpenCode cannot be removed automatically from this terminal.'
+}
+
+Write-Host ''
+Write-Host '== Removing OpenCode ==' -ForegroundColor Yellow
+& $npmCmd uninstall -g {{OpenCodeNpmPackageId}}
+
+if ($LASTEXITCODE -ne 0) {
+    throw "npm uninstall finished with exit code $LASTEXITCODE."
+}
+
+Write-Host ''
+Write-Host 'OpenCode uninstall command finished.' -ForegroundColor Green
+Write-Host 'Return to AIHelper and refresh the Codex section.' -ForegroundColor Green
 """;
     }
 
@@ -1387,6 +1693,90 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 """;
     }
 
+    private CommandResult GetCachedCommandResult(string cacheKey, TimeSpan duration, Func<CommandResult> factory)
+    {
+        lock (_cacheLock)
+        {
+            if (_commandCache.TryGetValue(cacheKey, out var cachedResult) &&
+                DateTime.UtcNow - cachedResult.CreatedUtc < duration)
+            {
+                return cachedResult.Result;
+            }
+        }
+
+        var result = factory();
+
+        lock (_cacheLock)
+        {
+            _commandCache[cacheKey] = new CachedCommandResult(DateTime.UtcNow, result);
+        }
+
+        return result;
+    }
+
+    private string? GetCachedPath(string cacheKey, Func<string?> resolver)
+    {
+        lock (_cacheLock)
+        {
+            if (_pathCache.TryGetValue(cacheKey, out var cachedValue) &&
+                DateTime.UtcNow - cachedValue.CreatedUtc < ExecutablePathCacheDuration)
+            {
+                return cachedValue.Value;
+            }
+        }
+
+        var value = resolver();
+
+        lock (_cacheLock)
+        {
+            _pathCache[cacheKey] = new CachedStringValue(DateTime.UtcNow, value);
+        }
+
+        return value;
+    }
+
+    private WingetPackageInfo GetCachedWingetPackageInfo(string cacheKey, TimeSpan duration, Func<WingetPackageInfo> factory)
+    {
+        lock (_cacheLock)
+        {
+            if (_wingetPackageCache.TryGetValue(cacheKey, out var cachedValue) &&
+                DateTime.UtcNow - cachedValue.CreatedUtc < duration)
+            {
+                return cachedValue.Value;
+            }
+        }
+
+        var value = factory();
+
+        lock (_cacheLock)
+        {
+            _wingetPackageCache[cacheKey] = new CachedWingetPackageValue(DateTime.UtcNow, value);
+        }
+
+        return value;
+    }
+
+    private IReadOnlyDictionary<string, string> GetCachedOllamaModels(string? ollamaPath)
+    {
+        if (string.IsNullOrWhiteSpace(ollamaPath))
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var cacheKey = $"ollama-models:{ollamaPath}";
+        var result = GetCachedCommandResult(
+            cacheKey,
+            SnapshotCommandCacheDuration,
+            () => RunCommand("cmd.exe", $"/c \"\"{ollamaPath}\" ls\""));
+
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Output))
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return ParseInstalledOllamaModels(result.Output);
+    }
+
     private static IReadOnlyDictionary<string, string> GetInstalledOllamaModels(string? ollamaPath)
     {
         if (string.IsNullOrWhiteSpace(ollamaPath))
@@ -1401,8 +1791,13 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
+        return ParseInstalledOllamaModels(modelsResult.Output);
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseInstalledOllamaModels(string output)
+    {
         var installedModels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var lines = modelsResult.Output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var lines = output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         foreach (var line in lines)
         {
@@ -1570,6 +1965,20 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 
         return FindExistingPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "codex.cmd"));
+    }
+
+    private static string? ResolveOpenCodeExecutablePath()
+    {
+        var commandPath = ResolveExecutableOnPath("opencode.cmd", "opencode.exe", "opencode");
+
+        if (!string.IsNullOrWhiteSpace(commandPath))
+        {
+            return commandPath;
+        }
+
+        return FindExistingPath(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "opencode.cmd"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "opencode", "opencode-cli.exe"));
     }
 
     private static string? ResolveLmStudioExecutablePath()
@@ -1862,6 +2271,22 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return string.Join(Environment.NewLine, lines);
     }
 
+    private static string BuildOpenCodeDetail(CommandResult openCodeVersion, string openCodePath)
+    {
+        var lines = new List<string>();
+
+        if (openCodeVersion.Success &&
+            !string.IsNullOrWhiteSpace(openCodeVersion.Output) &&
+            !string.Equals(openCodeVersion.Output, "-", StringComparison.Ordinal))
+        {
+            lines.Add(openCodeVersion.Output);
+        }
+
+        lines.Add(openCodePath);
+        lines.Add("Use this CLI to continue imported Codex snapshots in OpenCode.");
+        return string.Join(Environment.NewLine, lines);
+    }
+
     private static string BuildOpenClawNodeDetail(CommandResult nodeStatus)
     {
         if (nodeStatus == CommandResult.Missing)
@@ -2049,64 +2474,29 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return $"\"{value.Replace("\"", "\"\"")}\"";
     }
 
-    private void StartCodexProcess(string arguments, string workingDirectory)
+    private static string BuildOpenCodeInvocation(string commandPath, string arguments)
     {
-        var nativeCodexPath = ResolveCodexNativeExecutablePath();
-        var windowsTerminalPath = ResolveWindowsTerminalExecutablePath();
+        var launchCommand = commandPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
+            ? $"call {QuoteForCommandLine(commandPath)}"
+            : QuoteForCommandLine(commandPath);
 
-        if (!string.IsNullOrWhiteSpace(windowsTerminalPath))
-        {
-            StartCodexInWindowsTerminal(windowsTerminalPath, arguments, workingDirectory);
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(nativeCodexPath))
-        {
-            StartCodexNativeProcess(nativeCodexPath, arguments, workingDirectory);
-            return;
-        }
-
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = CodexCommandPath,
-                Arguments = arguments,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = true
-            });
+        return string.IsNullOrWhiteSpace(arguments)
+            ? launchCommand
+            : $"{launchCommand} {arguments}";
     }
 
-    private void StartCodexInWindowsTerminal(string windowsTerminalPath, string arguments, string workingDirectory)
+    private void StartCodexProcess(string arguments, string workingDirectory)
     {
         var command = BuildCodexTerminalCommand(arguments);
 
         Process.Start(
             new ProcessStartInfo
             {
-                FileName = windowsTerminalPath,
-                Arguments = $"new-tab --title {QuoteForCommandLine("AIHelper Codex")} -d {QuoteForCommandLine(workingDirectory)} cmd.exe /k {QuoteForCommandLine(command)}",
+                FileName = "cmd.exe",
+                Arguments = $"/k {QuoteForCommandLine(command)}",
+                WorkingDirectory = workingDirectory,
                 UseShellExecute = true
             });
-    }
-
-    private void StartCodexNativeProcess(string nativeCodexPath, string arguments, string workingDirectory)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = nativeCodexPath,
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false
-        };
-
-        var supportPath = ResolveCodexSupportPathDirectory(nativeCodexPath);
-
-        if (!string.IsNullOrWhiteSpace(supportPath))
-        {
-            startInfo.Environment["PATH"] = $"{supportPath};{Environment.GetEnvironmentVariable("PATH")}";
-        }
-
-        Process.Start(startInfo);
     }
 
     private string BuildCodexTerminalCommand(string arguments)
@@ -2204,10 +2594,16 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         public static CommandResult Missing => new(false, "Not found");
     }
 
+    private readonly record struct CachedCommandResult(DateTime CreatedUtc, CommandResult Result);
+
+    private readonly record struct CachedStringValue(DateTime CreatedUtc, string? Value);
+
     private readonly record struct WingetPackageInfo(bool IsInstalled, string Detail)
     {
         public static WingetPackageInfo Missing => new(false, "Not found");
     }
+
+    private readonly record struct CachedWingetPackageValue(DateTime CreatedUtc, WingetPackageInfo Value);
 }
 
 

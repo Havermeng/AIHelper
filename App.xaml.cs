@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Threading;
 using System.Windows.Interop;
+using System.IO;
+using System.Runtime;
 using LaptopSessionViewer.Services;
 
 namespace LaptopSessionViewer;
@@ -18,6 +20,7 @@ public partial class App : Application
     {
         RegisterGlobalExceptionHandlers();
         LogStartupContext();
+        ConfigureStartupOptimization();
 
         _singleInstanceService = new SingleInstanceService("AIHelper", _logService);
 
@@ -31,15 +34,39 @@ public partial class App : Application
         _singleInstanceService.StartActivationListener(ActivatePrimaryWindow);
         base.OnStartup(e);
 
+        StartupWindow? startupWindow = null;
+
         try
         {
+            startupWindow = new StartupWindow();
+            startupWindow.Show();
+            startupWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+
             var mainWindow = new MainWindow();
             MainWindow = mainWindow;
+            mainWindow.ContentRendered += (_, _) =>
+            {
+                try
+                {
+                    startupWindow?.Close();
+                }
+                catch
+                {
+                }
+            };
             mainWindow.Show();
             ActivatePrimaryWindow();
         }
         catch (Exception exception)
         {
+            try
+            {
+                startupWindow?.Close();
+            }
+            catch
+            {
+            }
+
             ShowFatalStartupError("AIHelper failed to start.", exception);
             Shutdown(-1);
         }
@@ -50,6 +77,25 @@ public partial class App : Application
         _singleInstanceService?.Dispose();
         _singleInstanceService = null;
         base.OnExit(e);
+    }
+
+    private void ConfigureStartupOptimization()
+    {
+        try
+        {
+            var profileDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "AIHelper",
+                "jit-profiles");
+            Directory.CreateDirectory(profileDirectory);
+            ProfileOptimization.SetProfileRoot(profileDirectory);
+            ProfileOptimization.StartProfile("startup.profile");
+            _logService.Info(nameof(App), $"Startup profile optimization enabled. Root={profileDirectory}");
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(App), "Failed to enable startup profile optimization.", exception);
+        }
     }
 
     private void RegisterGlobalExceptionHandlers()
