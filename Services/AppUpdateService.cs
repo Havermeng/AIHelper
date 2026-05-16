@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using LaptopSessionViewer.Models;
@@ -24,6 +25,23 @@ public sealed class AppUpdateService
     public string CurrentVersionDisplay => $"v{CurrentVersion}";
 
     public string ReleasePageUrl => LatestReleasePageUrl;
+
+    public string GetDefaultInstallerPath(string version)
+    {
+        var normalizedVersion = NormalizeVersion(version);
+        if (string.IsNullOrWhiteSpace(normalizedVersion))
+        {
+            normalizedVersion = CurrentVersion;
+        }
+
+        var updatesDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AIHelper",
+            "updates");
+        Directory.CreateDirectory(updatesDirectory);
+
+        return Path.Combine(updatesDirectory, $"AIHelper-Setup-{normalizedVersion}.exe");
+    }
 
     public async Task<AppUpdateSnapshot> GetLatestReleaseAsync(CancellationToken cancellationToken = default)
     {
@@ -103,6 +121,48 @@ public sealed class AppUpdateService
 
             throw;
         }
+    }
+
+    public void StartSilentInstallerAndRestart(string installerFilePath, string currentExecutablePath)
+    {
+        if (string.IsNullOrWhiteSpace(installerFilePath) || !File.Exists(installerFilePath))
+        {
+            throw new FileNotFoundException("Installer file was not found.", installerFilePath);
+        }
+
+        if (string.IsNullOrWhiteSpace(currentExecutablePath))
+        {
+            currentExecutablePath = Environment.ProcessPath ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(currentExecutablePath))
+        {
+            throw new InvalidOperationException("Current executable path is empty.");
+        }
+
+        var updatesDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AIHelper",
+            "updates");
+        Directory.CreateDirectory(updatesDirectory);
+
+        var scriptPath = Path.Combine(updatesDirectory, "install-update-silent.ps1");
+        var script = BuildSilentInstallScript(installerFilePath, currentExecutablePath);
+        File.WriteAllText(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        Process.Start(
+            new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+
+        _logService.Info(
+            nameof(AppUpdateService),
+            $"Started silent update installer. Installer={installerFilePath}; Script={scriptPath}; RestartExe={currentExecutablePath}");
     }
 
     private static HttpClient CreateHttpClient()
@@ -327,6 +387,36 @@ public sealed class AppUpdateService
         }
 
         return normalized.Trim();
+    }
+
+    private static string BuildSilentInstallScript(string installerFilePath, string currentExecutablePath)
+    {
+        return $$"""
+$ErrorActionPreference = 'Stop'
+Start-Sleep -Milliseconds 900
+
+$installerPath = '{{EscapePowerShellSingleQuotedString(installerFilePath)}}'
+$restartPath = '{{EscapePowerShellSingleQuotedString(currentExecutablePath)}}'
+$setupArguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/SP-')
+
+try {
+    $setupProcess = Start-Process -FilePath $installerPath -ArgumentList $setupArguments -Wait -PassThru
+    if ($setupProcess.ExitCode -eq 0 -or $setupProcess.ExitCode -eq 3010) {
+        if (Test-Path -LiteralPath $restartPath) {
+            Start-Process -FilePath $restartPath -ArgumentList '--start-minimized'
+        }
+    }
+} catch {
+    $logPath = Join-Path $env:LOCALAPPDATA 'AIHelper\update-error.log'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $logPath) -Force | Out-Null
+    $_ | Out-String | Set-Content -LiteralPath $logPath -Encoding UTF8
+}
+""";
+    }
+
+    private static string EscapePowerShellSingleQuotedString(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
     }
 
     private static string ParseHtmlTitle(string html)

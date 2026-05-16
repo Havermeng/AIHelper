@@ -925,7 +925,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         GetSetupSectionProgressText(GetCoreReadyCount(_lastEnvironmentSnapshot), 4);
 
     public string SetupCodexProgressText =>
-        GetSetupSectionProgressText(GetCodexReadyCount(_lastEnvironmentSnapshot), 5);
+        GetSetupSectionProgressText(GetCodexReadyCount(_lastEnvironmentSnapshot), 4);
 
     public string SetupLocalAiProgressText =>
         GetSetupSectionProgressText(GetLocalAiReadyCount(_lastEnvironmentSnapshot), 4);
@@ -2502,62 +2502,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var latestVersion = snapshot.LatestVersionDisplay.TrimStart('v', 'V');
-        var initialDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Downloads");
-
-        if (!Directory.Exists(initialDirectory))
-        {
-            initialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        }
-
-        var dialog = new SaveFileDialog
-        {
-            Filter = "Executable (*.exe)|*.exe|All files (*.*)|*.*",
-            DefaultExt = ".exe",
-            AddExtension = true,
-            FileName = string.IsNullOrWhiteSpace(latestVersion)
-                ? "AIHelper-Setup.exe"
-                : $"AIHelper-Setup-{latestVersion}.exe",
-            InitialDirectory = initialDirectory,
-            OverwritePrompt = true
-        };
-
-        if (dialog.ShowDialog(this) != true)
-        {
-            return;
-        }
+        var installerPath = _updateService.GetDefaultInstallerPath(latestVersion);
 
         try
         {
             IsUpdateBusy = true;
             SetUpdateStatus("#F8E7D6", "UpdateStatusDownloading");
-            await _updateService.DownloadInstallerAsync(snapshot.InstallerDownloadUrl, dialog.FileName);
-            SetUpdateStatus("#F8E7D6", "UpdateStatusDownloaded", dialog.FileName);
+            await _updateService.DownloadInstallerAsync(snapshot.InstallerDownloadUrl, installerPath);
+            SetUpdateStatus("#F8E7D6", "UpdateStatusDownloaded", installerPath);
 
-            var launchResult = MessageBox.Show(
-                Strings.Format("UpdateLaunchInstallerMessage", dialog.FileName),
-                Strings["UpdateLaunchInstallerTitle"],
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (launchResult != MessageBoxResult.Yes)
-            {
-                return;
-            }
-
-            Process.Start(
-                new ProcessStartInfo
-                {
-                    FileName = dialog.FileName,
-                    UseShellExecute = true,
-                    WorkingDirectory = Path.GetDirectoryName(dialog.FileName) ?? string.Empty
-                });
+            var executablePath = Environment.ProcessPath ??
+                                 Process.GetCurrentProcess().MainModule?.FileName ??
+                                 string.Empty;
+            _updateService.StartSilentInstallerAndRestart(installerPath, executablePath);
             SetUpdateStatus("#F8E7D6", "UpdateStatusInstallerStarted");
+
+            await Task.Delay(250);
+            Application.Current.Shutdown(0);
         }
         catch (Exception exception)
         {
-            SetUpdateStatus("#FFD6D6", "UpdateStatusDownloadFailed", exception.Message);
+            SetUpdateStatus("#FFD6D6", "UpdateStatusLaunchFailed", exception.Message);
         }
         finally
         {
@@ -5693,8 +5658,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var ready = 0;
-        ready += snapshot.CodexDesktopAppAvailable ? 1 : 0;
-        ready += snapshot.CodexAvailable ? 1 : 0;
+        ready += snapshot.CodexDesktopAppAvailable || snapshot.CodexAvailable ? 1 : 0;
         ready += snapshot.OpenCodeAvailable ? 1 : 0;
         ready += snapshot.LoggedIn ? 1 : 0;
         ready += snapshot.SessionsFolderExists ? 1 : 0;
@@ -5792,9 +5756,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return Strings["SetupRecommendedNextStepPending"];
         }
 
-        if (!snapshot.CodexDesktopAppAvailable)
+        if (!snapshot.CodexDesktopAppAvailable && !snapshot.CodexAvailable)
         {
-            return Strings["SetupNextCodexInstallDesktop"];
+            return Strings["SetupNextCodexInstallAny"];
         }
 
         if (!snapshot.CodexAvailable)

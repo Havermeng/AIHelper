@@ -12,6 +12,7 @@ namespace LaptopSessionViewer;
 /// </summary>
 public partial class App : Application
 {
+    private const string StartMinimizedArgument = "--start-minimized";
     private readonly AppLogService _logService = new();
     private bool _fatalErrorShown;
     private SingleInstanceService? _singleInstanceService;
@@ -22,11 +23,17 @@ public partial class App : Application
         LogStartupContext();
         ConfigureStartupOptimization();
 
+        var startMinimized = HasStartMinimizedArgument(e.Args);
+
         _singleInstanceService = new SingleInstanceService("AIHelper", _logService);
 
         if (!_singleInstanceService.TryAcquirePrimaryInstance())
         {
-            TryActivateExistingInstance();
+            if (!startMinimized)
+            {
+                TryActivateExistingInstance();
+            }
+
             Shutdown(0);
             return;
         }
@@ -38,11 +45,20 @@ public partial class App : Application
 
         try
         {
-            startupWindow = new StartupWindow();
-            startupWindow.Show();
-            startupWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            if (!startMinimized)
+            {
+                startupWindow = new StartupWindow();
+                startupWindow.Show();
+                startupWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+            }
 
             var mainWindow = new MainWindow();
+            if (startMinimized)
+            {
+                mainWindow.ShowActivated = false;
+                mainWindow.WindowState = WindowState.Minimized;
+            }
+
             MainWindow = mainWindow;
             mainWindow.ContentRendered += (_, _) =>
             {
@@ -55,7 +71,15 @@ public partial class App : Application
                 }
             };
             mainWindow.Show();
-            ActivatePrimaryWindow();
+
+            if (!startMinimized)
+            {
+                ActivatePrimaryWindow();
+            }
+            else
+            {
+                _logService.Info(nameof(App), "Started minimized after silent update.");
+            }
         }
         catch (Exception exception)
         {
@@ -146,6 +170,13 @@ public partial class App : Application
         {
             _logService.Error(nameof(App), "Failed to activate the already running AIHelper instance.", exception);
         }
+    }
+
+    private static bool HasStartMinimizedArgument(IEnumerable<string> args)
+    {
+        return args.Any(argument =>
+            string.Equals(argument, StartMinimizedArgument, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(argument, "/start-minimized", StringComparison.OrdinalIgnoreCase));
     }
 
     private void ActivatePrimaryWindow()

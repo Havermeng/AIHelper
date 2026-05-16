@@ -6,9 +6,9 @@
     <AssemblyName>AIHelper</AssemblyName>
     <Product>AIHelper</Product>
     <AssemblyTitle>AIHelper</AssemblyTitle>
-    <Version>1.1.38</Version>
-    <AssemblyVersion>1.1.38.0</AssemblyVersion>
-    <FileVersion>1.1.38.0</FileVersion>
+    <Version>1.1.40</Version>
+    <AssemblyVersion>1.1.40.0</AssemblyVersion>
+    <FileVersion>1.1.40.0</FileVersion>
     <ApplicationIcon>Assets\AIHelper.ico</ApplicationIcon>
     <RootNamespace>LaptopSessionViewer</RootNamespace>
     <Nullable>enable</Nullable>
