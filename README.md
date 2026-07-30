@@ -1,8 +1,8 @@
 # AIHelper
 
-AIHelper is a Windows WPF desktop app for working with local Codex sessions without dropping into the terminal for routine tasks.
+AIHelper is a Windows WPF desktop app for working with local AI coding agents — Codex and Claude Code — without dropping into the terminal for routine tasks.
 
-It combines session browsing, session launch presets, environment checks, local AI tooling, plugins/MCP catalog management, and Windows DNS management in one desktop utility.
+It combines session browsing for both agents, session launch presets, environment checks, hardware-aware local AI setup, a plugins/skills/MCP catalog that configures both agents at once, and Windows DNS management in one desktop utility.
 
 ## Screenshots
 
@@ -20,10 +20,11 @@ It combines session browsing, session launch presets, environment checks, local 
 
 ## Features
 
-- Browse local Codex sessions from `%USERPROFILE%\.codex\sessions`
-- Search, inspect, favorite, annotate, delete, and resume sessions
+- Browse local Codex sessions (`%USERPROFILE%\.codex\sessions`) and Claude Code sessions (`%USERPROFILE%\.claude\projects`) side by side, with readable titles, message counts, and working directories
+- Search, inspect, favorite, annotate, delete, and resume sessions — Codex sessions resume in Codex CLI, Claude Code sessions resume via `claude --resume`
 - Start a new Codex session with model, profile, sandbox, approval, and OSS options
-- Check and install the local AI tooling stack from the app
+- Check and install the local AI tooling stack from the app, with hardware-aware (RAM/VRAM/disk) local model recommendations for Ollama
+- Extensions catalog: install pinned MCP servers into both Codex and Claude Code at once, and install skills from the official [anthropics/skills](https://github.com/anthropics/skills) repository into the shared skills folder used by both agents
 - Track Codex, OpenCode, local AI runtimes, models, agents, plugins, and MCP entries
 - Manage Windows DNS settings with presets, custom presets, import/export, DoH, and rollback
 - Switch the UI language between English and Russian
@@ -46,7 +47,8 @@ The installer is self-contained for `Windows 10/11 x64`, so end users do not nee
 ## Requirements
 
 - Windows 10/11 x64
-- For session management and launch features: Codex CLI installed locally
+- For session management and launch features: Codex CLI and/or Claude Code CLI installed locally
+- For skill installation from the catalog: Git installed locally
 - For DNS changes: administrator rights
 
 ## Build From Source
