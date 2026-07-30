@@ -5028,6 +5028,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void InstallSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
     {
         var selected = SelectedExtension;
+        _logService.Info(
+            nameof(MainWindow),
+            $"Extension install click. Selected={selected?.Id ?? "-"}; CanProvision={selected?.CanProvision}; Busy={selected?.IsBusy}.");
 
         if (selected is null)
         {

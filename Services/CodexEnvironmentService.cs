@@ -67,6 +67,9 @@ public sealed class CodexEnvironmentService
     public string ConfigFilePath =>
         Path.Combine(CodexHomeFolder, "config.toml");
 
+    public string SharedSkillsFolder =>
+        Path.Combine(CodexHomeFolder, "skills");
+
     public string OpenClawHomeFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".openclaw");
 

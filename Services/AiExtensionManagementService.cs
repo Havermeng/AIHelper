@@ -42,13 +42,33 @@ public sealed class AiExtensionManagementService
                 string.Empty,
                 "aihelper-playwright",
                 "0.0.78",
-                ["-y", "@playwright/mcp@0.0.78"]),
+                ["-y", "@playwright/mcp@0.0.78"],
+                InstallIntoClaude: true),
             ["preset-mcp-filesystem"] = new(
                 "mcp",
                 string.Empty,
                 "aihelper-filesystem",
                 "2026.7.10",
-                ["-y", "@modelcontextprotocol/server-filesystem@2026.7.10", "{workspace}"]),
+                ["-y", "@modelcontextprotocol/server-filesystem@2026.7.10", "{workspace}"],
+                InstallIntoClaude: true),
+            ["preset-skill-creator"] = new(
+                "skill",
+                "skill-creator",
+                string.Empty,
+                "anthropics/skills",
+                ["https://github.com/anthropics/skills.git"]),
+            ["preset-skill-pdf"] = new(
+                "skill",
+                "pdf",
+                string.Empty,
+                "anthropics/skills",
+                ["https://github.com/anthropics/skills.git"]),
+            ["preset-skill-docx"] = new(
+                "skill",
+                "docx",
+                string.Empty,
+                "anthropics/skills",
+                ["https://github.com/anthropics/skills.git"]),
             ["preset-opencode-session-bridge"] = new(
                 "builtin",
                 string.Empty,
@@ -85,29 +105,35 @@ public sealed class AiExtensionManagementService
         }
 
         var codexAvailable = File.Exists(_environmentService.CodexCommandPath);
+        var claudeAvailable = File.Exists(_environmentService.ClaudeCommandPath);
+        var needsClaudeMcpList = managedItems.Any(item => Specs[item.Id].InstallIntoClaude);
         var pluginListTask = codexAvailable
             ? RunCodexAsync(["plugin", "list"], cancellationToken)
             : Task.FromResult(CommandExecutionResult.Missing("Codex CLI was not found."));
         var mcpListTask = codexAvailable
             ? RunCodexAsync(["mcp", "list"], cancellationToken)
             : Task.FromResult(CommandExecutionResult.Missing("Codex CLI was not found."));
+        var claudeMcpListTask = claudeAvailable && needsClaudeMcpList
+            ? RunClaudeAsync(["mcp", "list"], cancellationToken)
+            : Task.FromResult(CommandExecutionResult.Missing("Claude Code CLI was not found."));
         var lmStudioTask = ProbeLmStudioEndpointAsync(cancellationToken);
 
-        await Task.WhenAll(pluginListTask, mcpListTask, lmStudioTask);
+        await Task.WhenAll(pluginListTask, mcpListTask, claudeMcpListTask, lmStudioTask);
         var pluginList = await pluginListTask;
         var mcpList = await mcpListTask;
+        var claudeMcpList = await claudeMcpListTask;
         var lmStudioReady = await lmStudioTask;
         _logService.Info(
             nameof(AiExtensionManagementService),
-            $"Managed extension verification completed. Codex={_environmentService.CodexCommandPath}; PluginsOk={pluginList.Success}; PluginsLength={pluginList.Output.Length}; McpOk={mcpList.Success}; McpLength={mcpList.Output.Length}; LmStudio={lmStudioReady}.");
+            $"Managed extension verification completed. Codex={_environmentService.CodexCommandPath}; PluginsOk={pluginList.Success}; PluginsLength={pluginList.Output.Length}; McpOk={mcpList.Success}; McpLength={mcpList.Output.Length}; Claude={_environmentService.ClaudeCommandPath}; ClaudeMcpOk={claudeMcpList.Success}; LmStudio={lmStudioReady}.");
 
         foreach (var item in managedItems)
         {
             var spec = Specs[item.Id];
             item.ManagementKind = spec.Kind;
             item.PackageVersion = spec.Version;
-            item.CanProvision = spec.Kind is "plugin" or "mcp" or "endpoint";
-            item.CanUninstall = spec.Kind is "plugin" or "mcp";
+            item.CanProvision = spec.Kind is "plugin" or "mcp" or "endpoint" or "skill";
+            item.CanUninstall = spec.Kind is "plugin" or "mcp" or "skill";
             item.HasVerificationError = false;
 
             switch (spec.Kind)
@@ -116,7 +142,10 @@ public sealed class AiExtensionManagementService
                 ApplyPluginStatus(item, spec, pluginList, codexAvailable);
                 break;
                 case "mcp":
-                    ApplyMcpStatus(item, spec, mcpList, codexAvailable);
+                    ApplyMcpStatus(item, spec, mcpList, codexAvailable, claudeMcpList, claudeAvailable);
+                    break;
+                case "skill":
+                    ApplySkillStatus(item, spec);
                     break;
                 case "builtin":
                     ApplyBuiltInStatus(item);
@@ -158,14 +187,39 @@ public sealed class AiExtensionManagementService
                         return FailAndMark(item, preflight.Output);
                     }
 
+                    var mcpCommandTail = spec.CommandArguments
+                        .Skip(1)
+                        .Select(value => string.Equals(value, "{workspace}", StringComparison.Ordinal)
+                            ? EnsureWorkspaceDirectory()
+                            : value)
+                        .ToList();
                     var arguments = new List<string> { "mcp", "add", spec.McpName, "--", "npx", "-y" };
-                    arguments.AddRange(
-                        spec.CommandArguments
-                            .Skip(1)
-                            .Select(value => string.Equals(value, "{workspace}", StringComparison.Ordinal)
-                                ? EnsureWorkspaceDirectory()
-                                : value));
+                    arguments.AddRange(mcpCommandTail);
                     operation = await RunCodexAsync(arguments, cancellationToken);
+
+                    if (operation.Success &&
+                        spec.InstallIntoClaude &&
+                        File.Exists(_environmentService.ClaudeCommandPath))
+                    {
+                        var claudeArguments = new List<string>
+                        {
+                            "mcp", "add", "-s", "user", spec.McpName, "--", "npx", "-y"
+                        };
+                        claudeArguments.AddRange(mcpCommandTail);
+                        var claudeOperation = await RunClaudeAsync(claudeArguments, cancellationToken);
+
+                        if (!claudeOperation.Success &&
+                            !claudeOperation.Output.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return FailAndMark(
+                                item,
+                                $"Installed for Codex, but Claude Code setup failed: {claudeOperation.Output}");
+                        }
+                    }
+
+                    break;
+                case "skill":
+                    operation = await InstallSharedSkillAsync(spec, cancellationToken);
                     break;
                 case "endpoint":
                     var endpointReady = await ProbeLmStudioEndpointAsync(cancellationToken);
@@ -217,7 +271,7 @@ public sealed class AiExtensionManagementService
         AiExtensionItem item,
         CancellationToken cancellationToken = default)
     {
-        if (!Specs.TryGetValue(item.Id, out var spec) || spec.Kind is not ("plugin" or "mcp"))
+        if (!Specs.TryGetValue(item.Id, out var spec) || spec.Kind is not ("plugin" or "mcp" or "skill"))
         {
             return AiExtensionOperationResult.Fail("This entry has no trusted automatic removal path.");
         }
@@ -227,13 +281,34 @@ public sealed class AiExtensionManagementService
 
         try
         {
-            var result = spec.Kind == "plugin"
-                ? await RunCodexAsync(["plugin", "remove", spec.Selector, "--json"], cancellationToken)
-                : await RunCodexAsync(["mcp", "remove", spec.McpName], cancellationToken);
+            var result = spec.Kind switch
+            {
+                "plugin" => await RunCodexAsync(["plugin", "remove", spec.Selector, "--json"], cancellationToken),
+                "skill" => RemoveSharedSkill(spec),
+                _ => await RunCodexAsync(["mcp", "remove", spec.McpName], cancellationToken)
+            };
 
             if (!result.Success)
             {
                 return FailAndMark(item, result.Output);
+            }
+
+            if (spec.Kind == "mcp" &&
+                spec.InstallIntoClaude &&
+                File.Exists(_environmentService.ClaudeCommandPath))
+            {
+                var claudeResult = await RunClaudeAsync(
+                    ["mcp", "remove", "-s", "user", spec.McpName],
+                    cancellationToken);
+
+                if (!claudeResult.Success &&
+                    !claudeResult.Output.Contains("not found", StringComparison.OrdinalIgnoreCase) &&
+                    !claudeResult.Output.Contains("No MCP", StringComparison.OrdinalIgnoreCase))
+                {
+                    return FailAndMark(
+                        item,
+                        $"Removed from Codex, but Claude Code removal failed: {claudeResult.Output}");
+                }
             }
 
             await RefreshAsync([item], cancellationToken);
@@ -296,7 +371,9 @@ public sealed class AiExtensionManagementService
         AiExtensionItem item,
         ProvisioningSpec spec,
         CommandExecutionResult mcpList,
-        bool codexAvailable)
+        bool codexAvailable,
+        CommandExecutionResult claudeMcpList,
+        bool claudeAvailable)
     {
         var matchingLine = mcpList.Output
             .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -308,20 +385,50 @@ public sealed class AiExtensionManagementService
             .FirstOrDefault(argument => argument.StartsWith("@", StringComparison.Ordinal));
         var pinnedPackageMatches = string.IsNullOrWhiteSpace(expectedPackage) ||
                                    matchingLine?.Contains(expectedPackage, StringComparison.OrdinalIgnoreCase) == true;
+        var codexVerified = installed && enabled && pinnedPackageMatches;
+
+        // `claude mcp list` exits non-zero when any configured server is unhealthy or needs
+        // authentication, so the exit code cannot be used to decide whether the list is usable.
+        var claudeListUsable = claudeMcpList.Success ||
+                               claudeMcpList.Output.Contains(':', StringComparison.Ordinal);
+        var claudeRelevant = spec.InstallIntoClaude && claudeAvailable && claudeListUsable;
+        var claudeInstalled = claudeRelevant &&
+                              claudeMcpList.Output
+                                  .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                  .Any(line => line.StartsWith($"{spec.McpName}:", StringComparison.OrdinalIgnoreCase));
 
         item.IsInstalled = installed;
         item.IsEnabled = enabled;
-        item.IsVerified = installed && enabled && pinnedPackageMatches;
+        item.IsVerified = codexVerified && (!claudeRelevant || claudeInstalled);
         item.HasVerificationError = codexAvailable && !mcpList.Success;
         item.VerificationDetail = !codexAvailable
             ? "Install or repair Codex CLI first."
             : item.IsVerified
-                ? "Codex reports the pinned MCP command as configured and enabled."
-                : installed && !pinnedPackageMatches
-                    ? "An MCP entry with this name exists, but it does not match AIHelper's pinned package."
-                    : mcpList.Success
-                        ? "Codex does not report this MCP server as configured."
-                        : mcpList.Output;
+                ? claudeRelevant
+                    ? "Both Codex and Claude Code report this MCP server as configured."
+                    : spec.InstallIntoClaude
+                        ? "Codex reports the pinned MCP command as configured and enabled. Claude Code state could not be checked."
+                        : "Codex reports the pinned MCP command as configured and enabled."
+                : codexVerified && claudeRelevant && !claudeInstalled
+                    ? "Codex is configured, but Claude Code does not report this MCP server yet. Reinstall to add it to Claude Code."
+                    : installed && !pinnedPackageMatches
+                        ? "An MCP entry with this name exists, but it does not match AIHelper's pinned package."
+                        : mcpList.Success
+                            ? "Codex does not report this MCP server as configured."
+                            : mcpList.Output;
+    }
+
+    private void ApplySkillStatus(AiExtensionItem item, ProvisioningSpec spec)
+    {
+        var targetPath = Path.Combine(_environmentService.SharedSkillsFolder, spec.Selector);
+        var installed = File.Exists(Path.Combine(targetPath, "SKILL.md"));
+
+        item.IsInstalled = installed;
+        item.IsEnabled = installed;
+        item.IsVerified = installed;
+        item.VerificationDetail = installed
+            ? $"SKILL.md is present in the shared skills folder ({targetPath}). Both Codex and Claude Code can use it."
+            : "The skill is not in the shared skills folder yet.";
     }
 
     private void ApplyBuiltInStatus(AiExtensionItem item)
@@ -402,6 +509,153 @@ public sealed class AiExtensionManagementService
         return File.Exists(codexPath)
             ? RunProcessAsync(codexPath, arguments, cancellationToken)
             : Task.FromResult(CommandExecutionResult.Missing("Codex CLI was not found."));
+    }
+
+    private Task<CommandExecutionResult> RunClaudeAsync(
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken)
+    {
+        var claudePath = _environmentService.ClaudeCommandPath;
+        return File.Exists(claudePath)
+            ? RunProcessAsync(claudePath, arguments, cancellationToken)
+            : Task.FromResult(CommandExecutionResult.Missing("Claude Code CLI was not found."));
+    }
+
+    private async Task<CommandExecutionResult> InstallSharedSkillAsync(
+        ProvisioningSpec spec,
+        CancellationToken cancellationToken)
+    {
+        var gitPath = ResolveExecutable("git.exe", "git");
+        if (string.IsNullOrWhiteSpace(gitPath))
+        {
+            return CommandExecutionResult.Missing("Git is required to install skills. Install Git first, then try again.");
+        }
+
+        var repositoryUrl = spec.CommandArguments.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(repositoryUrl) ||
+            !repositoryUrl.StartsWith("https://github.com/", StringComparison.OrdinalIgnoreCase))
+        {
+            return CommandExecutionResult.Missing("The skill source repository is not configured or is not a trusted GitHub URL.");
+        }
+
+        var temporaryRoot = Path.Combine(Path.GetTempPath(), $"aihelper-skill-{Guid.NewGuid():N}");
+
+        try
+        {
+            var clone = await RunProcessAsync(
+                gitPath,
+                ["clone", "--depth", "1", repositoryUrl, temporaryRoot],
+                cancellationToken);
+
+            if (!clone.Success)
+            {
+                return clone;
+            }
+
+            var skillDirectory = Directory
+                .EnumerateDirectories(temporaryRoot, spec.Selector, SearchOption.AllDirectories)
+                .FirstOrDefault(directory => File.Exists(Path.Combine(directory, "SKILL.md")));
+
+            if (skillDirectory is null)
+            {
+                return CommandExecutionResult.Missing(
+                    $"The repository does not contain a '{spec.Selector}' folder with SKILL.md. Nothing was changed.");
+            }
+
+            var targetPath = Path.Combine(_environmentService.SharedSkillsFolder, spec.Selector);
+
+            if (Directory.Exists(targetPath))
+            {
+                var removal = RemoveSharedSkill(spec);
+                if (!removal.Success)
+                {
+                    return removal;
+                }
+            }
+
+            CopyDirectory(skillDirectory, targetPath);
+            return new CommandExecutionResult(true, $"The skill was installed to {targetPath}.");
+        }
+        finally
+        {
+            TryDeleteDirectory(temporaryRoot);
+        }
+    }
+
+    private CommandExecutionResult RemoveSharedSkill(ProvisioningSpec spec)
+    {
+        var skillsRoot = Path.GetFullPath(_environmentService.SharedSkillsFolder);
+        var targetPath = Path.GetFullPath(Path.Combine(skillsRoot, spec.Selector));
+
+        if (!targetPath.StartsWith(skillsRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return CommandExecutionResult.Missing("The skill path is outside the shared skills folder. Nothing was changed.");
+        }
+
+        if (!Directory.Exists(targetPath))
+        {
+            return new CommandExecutionResult(true, "The skill folder is already absent.");
+        }
+
+        var attributes = File.GetAttributes(targetPath);
+        if (attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            return CommandExecutionResult.Missing("The skill folder is a link, not a regular folder. Remove it manually.");
+        }
+
+        try
+        {
+            DeleteDirectoryRobust(targetPath);
+            return new CommandExecutionResult(true, "The skill folder was removed from the shared skills folder.");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return CommandExecutionResult.Missing($"Could not remove the skill folder: {exception.Message}");
+        }
+    }
+
+    private static void CopyDirectory(string sourcePath, string targetPath)
+    {
+        Directory.CreateDirectory(targetPath);
+
+        foreach (var file in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourcePath, file);
+            var destination = Path.Combine(targetPath, relativePath);
+            var destinationDirectory = Path.GetDirectoryName(destination);
+
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    private static void DeleteDirectoryRobust(string path)
+    {
+        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
+
+        Directory.Delete(path, recursive: true);
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                DeleteDirectoryRobust(path);
+            }
+        }
+        catch
+        {
+            // Leftover temporary clone directories are cleaned up by Windows temp maintenance.
+        }
     }
 
     private static async Task<CommandExecutionResult> RunProcessAsync(
@@ -581,7 +835,8 @@ public sealed class AiExtensionManagementService
         string Selector,
         string McpName,
         string Version,
-        IReadOnlyList<string> CommandArguments);
+        IReadOnlyList<string> CommandArguments,
+        bool InstallIntoClaude = false);
 
     private readonly record struct CommandExecutionResult(bool Success, string Output)
     {

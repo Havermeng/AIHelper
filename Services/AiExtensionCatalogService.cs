@@ -187,6 +187,42 @@ public sealed class AiExtensionCatalogService
             },
             new AiExtensionItem
             {
+                Id = "preset-skill-creator",
+                Name = "Skill Creator",
+                Kind = AiExtensionKind.Skill,
+                TargetApp = "Codex",
+                Description = T(strings, "ExtensionPresetSkillCreatorDescription", "Skill for creating your own skills. Installs into the shared skills folder used by both Codex and Claude Code."),
+                CommandOrUri = "github.com/anthropics/skills → skill-creator",
+                RequestedAccess = T(strings, "ExtensionAccessSharedSkill", "Files are copied from the official anthropics/skills GitHub repository into the local shared skills folder."),
+                PackageVersion = "anthropics/skills",
+                IsPreset = true
+            },
+            new AiExtensionItem
+            {
+                Id = "preset-skill-pdf",
+                Name = "PDF Skill",
+                Kind = AiExtensionKind.Skill,
+                TargetApp = "Codex",
+                Description = T(strings, "ExtensionPresetSkillPdfDescription", "Skill for working with PDF files. Installs into the shared skills folder used by both Codex and Claude Code."),
+                CommandOrUri = "github.com/anthropics/skills → pdf",
+                RequestedAccess = T(strings, "ExtensionAccessSharedSkill", "Files are copied from the official anthropics/skills GitHub repository into the local shared skills folder."),
+                PackageVersion = "anthropics/skills",
+                IsPreset = true
+            },
+            new AiExtensionItem
+            {
+                Id = "preset-skill-docx",
+                Name = "Word (DOCX) Skill",
+                Kind = AiExtensionKind.Skill,
+                TargetApp = "Codex",
+                Description = T(strings, "ExtensionPresetSkillDocxDescription", "Skill for working with Word documents. Installs into the shared skills folder used by both Codex and Claude Code."),
+                CommandOrUri = "github.com/anthropics/skills → docx",
+                RequestedAccess = T(strings, "ExtensionAccessSharedSkill", "Files are copied from the official anthropics/skills GitHub repository into the local shared skills folder."),
+                PackageVersion = "anthropics/skills",
+                IsPreset = true
+            },
+            new AiExtensionItem
+            {
                 Id = "preset-opencode-session-bridge",
                 Name = "AIHelper Session Bridge",
                 Kind = AiExtensionKind.Plugin,
