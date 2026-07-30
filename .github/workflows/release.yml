@@ -69,6 +69,23 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Authenticode signing failed with exit code $LASTEXITCODE."
             }
+
+            # The release certificate may be self-signed, so its chain has no public
+            # trust anchor. Import its public part into the ephemeral runner's trust
+            # stores so the strict signature verification step can validate the chain
+            # against exactly this certificate. The runner is discarded after the job.
+            $releaseCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+              $certificatePath,
+              $env:AIHELPER_SIGNING_PFX_PASSWORD)
+            $publicCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+              ,$releaseCertificate.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+
+            foreach ($storeName in @('Root', 'TrustedPublisher')) {
+              $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, 'LocalMachine')
+              $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+              $store.Add($publicCertificate)
+              $store.Close()
+            }
           }
           finally {
             Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
