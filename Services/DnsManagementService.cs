@@ -517,17 +517,14 @@ $records | ConvertTo-Json -Depth 4 -Compress
 
     private static CommandResult RunPowerShell(string script, bool requiresElevation)
     {
-        var tempScriptPath = Path.Combine(Path.GetTempPath(), $"aihelper-dns-{Guid.NewGuid():N}.ps1");
-
         try
         {
-            File.WriteAllText(tempScriptPath, script, new UTF8Encoding(false));
+            var encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
             using var process = new Process();
             process.StartInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{tempScriptPath}\"",
                 UseShellExecute = requiresElevation,
                 CreateNoWindow = !requiresElevation,
                 WindowStyle = requiresElevation ? ProcessWindowStyle.Normal : ProcessWindowStyle.Hidden,
@@ -535,6 +532,10 @@ $records | ConvertTo-Json -Depth 4 -Compress
                 RedirectStandardError = !requiresElevation,
                 Verb = requiresElevation ? "runas" : string.Empty
             };
+            process.StartInfo.ArgumentList.Add("-NoProfile");
+            process.StartInfo.ArgumentList.Add("-NonInteractive");
+            process.StartInfo.ArgumentList.Add("-EncodedCommand");
+            process.StartInfo.ArgumentList.Add(encodedCommand);
 
             process.Start();
 
@@ -568,19 +569,6 @@ $records | ConvertTo-Json -Depth 4 -Compress
         catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
         {
             return new CommandResult(false, "The operation was cancelled.");
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(tempScriptPath))
-                {
-                    File.Delete(tempScriptPath);
-                }
-            }
-            catch
-            {
-            }
         }
     }
 

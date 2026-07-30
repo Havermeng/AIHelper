@@ -1,11 +1,13 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 
 namespace LaptopSessionViewer.Models;
 
 public sealed class SessionRecord : INotifyPropertyChanged
 {
     private bool _isFavorite;
+    private bool _isHidden;
     private string _note = string.Empty;
     private string _searchBlob = string.Empty;
     private string _transcriptText = string.Empty;
@@ -30,6 +32,12 @@ public sealed class SessionRecord : INotifyPropertyChanged
     public required DateTime UpdatedAtUtc { get; init; }
     public required string BaseSearchBlob { get; init; }
 
+    public bool IsCodexSession =>
+        string.Equals(Source, "Codex", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsClaudeSession =>
+        string.Equals(Source, "Claude", StringComparison.OrdinalIgnoreCase);
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public bool IsFavorite
@@ -40,6 +48,18 @@ public sealed class SessionRecord : INotifyPropertyChanged
             if (SetField(ref _isFavorite, value))
             {
                 OnPropertyChanged(nameof(FavoriteBadgeText));
+            }
+        }
+    }
+
+    public bool IsHidden
+    {
+        get => _isHidden;
+        set
+        {
+            if (SetField(ref _isHidden, value))
+            {
+                OnPropertyChanged(nameof(HiddenBadgeText));
             }
         }
     }
@@ -78,13 +98,20 @@ public sealed class SessionRecord : INotifyPropertyChanged
 
     public string ShortSessionId => SessionId.Length <= 12 ? SessionId : SessionId[..12];
 
-    public string DisplayTitle => HasNote ? TrimPreview(Note, 90) : Title;
+    public string DisplayTitle =>
+        HasNote
+            ? TrimPreview(Note, 90)
+            : LooksLikeOpaqueSessionTitle(Title) && !string.IsNullOrWhiteSpace(Preview)
+                ? TrimPreview(Preview, 90)
+                : Title;
 
     public string SecondaryTitle => HasNote ? TrimPreview(Title, 90) : Preview;
 
     public bool HasSecondaryTitle => !string.IsNullOrWhiteSpace(SecondaryTitle);
 
     public string FavoriteBadgeText => IsFavorite ? "FAV" : string.Empty;
+
+    public string HiddenBadgeText => IsHidden ? "OFF" : string.Empty;
 
     public bool HasNote => !string.IsNullOrWhiteSpace(Note);
 
@@ -100,6 +127,12 @@ public sealed class SessionRecord : INotifyPropertyChanged
         }
 
         return $"{singleLine[..maxLength].TrimEnd()}...";
+    }
+
+    private static bool LooksLikeOpaqueSessionTitle(string title)
+    {
+        return Guid.TryParse(title, out _) ||
+               Regex.IsMatch(title, "^[a-fA-F0-9]{24,}$", RegexOptions.CultureInvariant);
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

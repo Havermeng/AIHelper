@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+
+  <Commands package="guidAIHelperPackage">
+    <Groups>
+      <Group guid="guidAIHelperCommandSet" id="AIHelperSessionsGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_WNDO_OTRWNDWS1" />
+      </Group>
+    </Groups>
+
+    <Buttons>
+      <Button guid="guidAIHelperCommandSet" id="OpenAIHelperSessionsWindow" priority="0x0100" type="Button">
+        <Parent guid="guidAIHelperCommandSet" id="AIHelperSessionsGroup" />
+        <Strings>
+          <ButtonText>Сессии AIHelper</ButtonText>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+
+  <Symbols>
+    <GuidSymbol name="guidAIHelperPackage" value="{f6d4e486-0fff-49d4-812b-4ccd15a688ed}" />
+    <GuidSymbol name="guidAIHelperCommandSet" value="{95c8799a-0e16-4335-9ea4-9d8452b57898}">
+      <IDSymbol name="AIHelperSessionsGroup" value="0x1020" />
+      <IDSymbol name="OpenAIHelperSessionsWindow" value="0x0100" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

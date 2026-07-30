@@ -32,7 +32,9 @@ public sealed class SessionViewerSettingsService
                     _ => AppLanguage.English
                 },
                 DefaultDangerousFullAccess = settings?.DefaultDangerousFullAccess ?? false,
-                PhotoPasteFixEnabled = settings?.PhotoPasteFixEnabled ?? false
+                PhotoPasteFixEnabled = settings?.PhotoPasteFixEnabled ?? false,
+                BeginnerModeEnabled = settings?.BeginnerModeEnabled ?? true,
+                HasCompletedBeginnerOnboarding = settings?.HasCompletedBeginnerOnboarding ?? false
             };
         }
         catch (Exception exception) when (exception is JsonException or IOException)
@@ -69,7 +71,9 @@ public sealed class SessionViewerSettingsService
         {
             Language = settings.Language == AppLanguage.Russian ? "ru" : "en",
             DefaultDangerousFullAccess = settings.DefaultDangerousFullAccess,
-            PhotoPasteFixEnabled = settings.PhotoPasteFixEnabled
+            PhotoPasteFixEnabled = settings.PhotoPasteFixEnabled,
+            BeginnerModeEnabled = settings.BeginnerModeEnabled,
+            HasCompletedBeginnerOnboarding = settings.HasCompletedBeginnerOnboarding
         };
 
         var json = JsonSerializer.Serialize(
@@ -103,6 +107,20 @@ public sealed class SessionViewerSettingsService
         SaveSettings(settings);
     }
 
+    public void SaveBeginnerModeEnabled(bool enabled)
+    {
+        var settings = LoadSettings();
+        settings.BeginnerModeEnabled = enabled;
+        SaveSettings(settings);
+    }
+
+    public void SaveHasCompletedBeginnerOnboarding(bool completed)
+    {
+        var settings = LoadSettings();
+        settings.HasCompletedBeginnerOnboarding = completed;
+        SaveSettings(settings);
+    }
+
     private sealed class SettingsDto
     {
         public string Language { get; set; } = "en";
@@ -110,5 +128,9 @@ public sealed class SessionViewerSettingsService
         public bool DefaultDangerousFullAccess { get; set; }
 
         public bool PhotoPasteFixEnabled { get; set; }
+
+        public bool? BeginnerModeEnabled { get; set; }
+
+        public bool? HasCompletedBeginnerOnboarding { get; set; }
     }
 }

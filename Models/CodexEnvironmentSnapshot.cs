@@ -2,6 +2,15 @@
 
 public sealed class CodexEnvironmentSnapshot
 {
+    public required string GpuName { get; init; }
+    public required long GpuMemoryBytes { get; init; }
+    public required bool GpuMemoryIsEstimated { get; init; }
+    public required string GpuDriverVersion { get; init; }
+    public required long TotalPhysicalMemoryBytes { get; init; }
+    public required long AvailablePhysicalMemoryBytes { get; init; }
+    public required long SystemDriveFreeBytes { get; init; }
+    public required long OllamaModelStorageBytes { get; init; }
+    public required string OllamaProcessorSummary { get; init; }
     public required bool WingetAvailable { get; init; }
     public required string WingetVersion { get; init; }
     public required bool NodeAvailable { get; init; }

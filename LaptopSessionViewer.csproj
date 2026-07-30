@@ -6,9 +6,9 @@
     <AssemblyName>AIHelper</AssemblyName>
     <Product>AIHelper</Product>
     <AssemblyTitle>AIHelper</AssemblyTitle>
-    <Version>1.1.41</Version>
-    <AssemblyVersion>1.1.41.0</AssemblyVersion>
-    <FileVersion>1.1.41.0</FileVersion>
+    <Version>1.2.0</Version>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <FileVersion>1.2.0.0</FileVersion>
     <ApplicationIcon>Assets\AIHelper.ico</ApplicationIcon>
     <RootNamespace>LaptopSessionViewer</RootNamespace>
     <Nullable>enable</Nullable>
@@ -24,6 +24,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FluentIcons.Wpf" Version="2.1.333" />
+    <Compile Remove="AIHelper.VisualStudioExtension\**\*.cs" />
+    <Page Remove="AIHelper.VisualStudioExtension\**\*.xaml" />
+    <None Remove="AIHelper.VisualStudioExtension\**\*" />
+    <Content Remove="AIHelper.VisualStudioExtension\**\*" />
     <Resource Include="Assets\AIHelper.ico" />
     <Content Include="Assets\dns-presets-example.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

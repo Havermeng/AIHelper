@@ -43,13 +43,60 @@ public static class AiHelperWorkspaceService
         var windowsDirectory = NormalizeDirectory(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
         var programFiles = NormalizeDirectory(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
         var programFilesX86 = NormalizeDirectory(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+        var userProfile = NormalizeDirectory(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        var desktop = NormalizeDirectory(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
         var driveRoot = Path.GetPathRoot(normalizedDirectory);
 
         return IsSameOrChild(normalizedDirectory, systemDirectory) ||
                IsSameOrChild(normalizedDirectory, windowsDirectory) ||
                IsSameOrChild(normalizedDirectory, programFiles) ||
                IsSameOrChild(normalizedDirectory, programFilesX86) ||
+               string.Equals(normalizedDirectory, userProfile, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(normalizedDirectory, desktop, StringComparison.OrdinalIgnoreCase) ||
                string.Equals(normalizedDirectory.TrimEnd(Path.DirectorySeparatorChar), driveRoot?.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool TryDeleteGeneratedWorkspace(string? workspace)
+    {
+        var normalizedWorkspace = NormalizeDirectory(workspace);
+        var desktop = NormalizeDirectory(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+        var expectedRoot = NormalizeDirectory(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            WorkspaceRootFolderName));
+
+        if (string.IsNullOrWhiteSpace(normalizedWorkspace) ||
+            string.IsNullOrWhiteSpace(desktop) ||
+            string.IsNullOrWhiteSpace(expectedRoot) ||
+            !string.Equals(Path.GetDirectoryName(normalizedWorkspace), expectedRoot, StringComparison.OrdinalIgnoreCase) ||
+            !Directory.Exists(normalizedWorkspace))
+        {
+            return false;
+        }
+
+        var files = Directory.GetFiles(normalizedWorkspace);
+        var directories = Directory.GetDirectories(normalizedWorkspace);
+        if (directories.Length > 0 ||
+            files.Any(file => !string.Equals(
+                Path.GetFileName(file),
+                "README_AIHELPER_PROJECT.txt",
+                StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        foreach (var file in files)
+        {
+            File.Delete(file);
+        }
+
+        Directory.Delete(normalizedWorkspace);
+        if (Directory.Exists(expectedRoot) &&
+            Directory.GetFileSystemEntries(expectedRoot).Length == 0)
+        {
+            Directory.Delete(expectedRoot);
+        }
+
+        return true;
     }
 
     private static string BuildDesktopWorkspacePath(string sessionId, string title)

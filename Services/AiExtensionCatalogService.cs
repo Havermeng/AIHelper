@@ -6,6 +6,13 @@ namespace LaptopSessionViewer.Services;
 
 public sealed class AiExtensionCatalogService
 {
+    private static readonly HashSet<string> ObsoletePresetIds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "preset-plugin-skill-installer",
+        "preset-opencode-filesystem-mcp",
+        "preset-lmstudio-local-mcp"
+    };
+
     private readonly string _extensionsPath =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -34,10 +41,18 @@ public sealed class AiExtensionCatalogService
         }
 
         var customItems = storedItems
-            .Where(item => !presetIds.Contains(item.Id) && !string.IsNullOrWhiteSpace(item.Name))
+            .Where(item =>
+                !presetIds.Contains(item.Id) &&
+                !ObsoletePresetIds.Contains(item.Id) &&
+                !string.IsNullOrWhiteSpace(item.Name))
             .Select(item =>
             {
-                item.IsPreset = false;
+                if (!item.IsDetected)
+                {
+                    item.IsPreset = false;
+                }
+
+                item.TargetApp = NormalizeTargetApp(item);
                 item.IsInstalled = item.IsInstalled || item.IsEnabled;
                 return item;
             });
@@ -112,20 +127,14 @@ public sealed class AiExtensionCatalogService
         [
             new AiExtensionItem
             {
-                Id = "preset-plugin-skill-installer",
-                Name = "Skill Installer",
-                Kind = AiExtensionKind.Plugin,
-                Description = T(strings, "ExtensionPresetSkillInstallerDescription", "Installs and manages Codex skills from curated sources or GitHub repositories."),
-                CommandOrUri = "codex skills install <skill-or-github-url>",
-                IsPreset = true
-            },
-            new AiExtensionItem
-            {
                 Id = "preset-plugin-hugging-face",
                 Name = "Hugging Face",
                 Kind = AiExtensionKind.Plugin,
+                TargetApp = "Codex",
                 Description = T(strings, "ExtensionPresetHuggingFaceDescription", "Plugin for model, dataset, paper and Space workflows on Hugging Face."),
-                CommandOrUri = "plugin:hugging-face",
+                CommandOrUri = "codex plugin add hugging-face@openai-curated",
+                RequestedAccess = T(strings, "ExtensionAccessHuggingFace", "Network access and the Hugging Face account or token only when a workflow needs it."),
+                PackageVersion = "openai-curated",
                 IsPreset = true
             },
             new AiExtensionItem
@@ -133,17 +142,23 @@ public sealed class AiExtensionCatalogService
                 Id = "preset-mcp-filesystem",
                 Name = "Filesystem MCP",
                 Kind = AiExtensionKind.Mcp,
+                TargetApp = "Codex",
                 Description = T(strings, "ExtensionPresetFilesystemDescription", "Lets an assistant work with allowed local files through an MCP server."),
-                CommandOrUri = "mcp:filesystem",
+                CommandOrUri = "codex mcp add aihelper-filesystem -- npx -y @modelcontextprotocol/server-filesystem@2026.7.10 \"%USERPROFILE%\\AIHelper Workspaces\"",
+                RequestedAccess = T(strings, "ExtensionAccessFilesystem", "Read and write access is restricted to the AIHelper Workspaces folder."),
+                PackageVersion = "2026.7.10",
                 IsPreset = true
             },
             new AiExtensionItem
             {
                 Id = "preset-mcp-github",
-                Name = "GitHub MCP",
-                Kind = AiExtensionKind.Mcp,
+                Name = "GitHub",
+                Kind = AiExtensionKind.Plugin,
+                TargetApp = "Codex",
                 Description = T(strings, "ExtensionPresetGithubDescription", "Connects assistant workflows to GitHub repositories, issues and pull requests."),
-                CommandOrUri = "mcp:github",
+                CommandOrUri = "codex plugin add github@openai-curated",
+                RequestedAccess = T(strings, "ExtensionAccessGithub", "GitHub repositories, issues, and pull requests allowed by the account used during sign-in."),
+                PackageVersion = "openai-curated",
                 IsPreset = true
             },
             new AiExtensionItem
@@ -151,20 +166,82 @@ public sealed class AiExtensionCatalogService
                 Id = "preset-mcp-playwright",
                 Name = "Playwright MCP",
                 Kind = AiExtensionKind.Mcp,
+                TargetApp = "Codex",
                 Description = T(strings, "ExtensionPresetPlaywrightDescription", "Provides browser automation for testing, screenshots and web interaction."),
-                CommandOrUri = "mcp:playwright",
+                CommandOrUri = "codex mcp add aihelper-playwright -- npx -y @playwright/mcp@0.0.78",
+                RequestedAccess = T(strings, "ExtensionAccessPlaywright", "Can open websites and control an isolated browser. It does not receive unrestricted Windows desktop access."),
+                PackageVersion = "0.0.78",
                 IsPreset = true
             },
             new AiExtensionItem
             {
                 Id = "preset-mcp-canva",
-                Name = "Canva MCP",
-                Kind = AiExtensionKind.Mcp,
+                Name = "Canva",
+                Kind = AiExtensionKind.Plugin,
+                TargetApp = "Codex",
                 Description = T(strings, "ExtensionPresetCanvaDescription", "Connects assistant workflows to Canva designs and assets when configured."),
-                CommandOrUri = "mcp:canva",
+                CommandOrUri = "codex plugin add canva@openai-curated",
+                RequestedAccess = T(strings, "ExtensionAccessCanva", "Canva designs and assets allowed by the account used during sign-in."),
+                PackageVersion = "openai-curated",
+                IsPreset = true
+            },
+            new AiExtensionItem
+            {
+                Id = "preset-opencode-session-bridge",
+                Name = "AIHelper Session Bridge",
+                Kind = AiExtensionKind.Plugin,
+                TargetApp = "OpenCode",
+                Description = T(strings, "ExtensionPresetOpenCodeBridgeDescription", "Prepares AIHelper session context files so OpenCode can continue compatible sessions."),
+                CommandOrUri = "Built into AIHelper",
+                RequestedAccess = T(strings, "ExtensionAccessSessionBridge", "Writes a local handoff file containing the selected session context. It does not upload it."),
+                PackageVersion = "AIHelper",
+                IsPreset = true
+            },
+            new AiExtensionItem
+            {
+                Id = "preset-lmstudio-openai-provider",
+                Name = "LM Studio Local Provider",
+                Kind = AiExtensionKind.Plugin,
+                TargetApp = "LmStudio",
+                Description = T(strings, "ExtensionPresetLmStudioProviderDescription", "OpenAI-compatible local provider endpoint for models served by LM Studio."),
+                CommandOrUri = "http://127.0.0.1:1234/v1",
+                RequestedAccess = T(strings, "ExtensionAccessLmStudio", "Connects only to the LM Studio server on this PC. Cloud models selected inside LM Studio may still use the internet."),
+                PackageVersion = "Local endpoint",
                 IsPreset = true
             }
         ];
+    }
+
+    private static string NormalizeTargetApp(AiExtensionItem item)
+    {
+        if (string.Equals(item.TargetApp, "OpenCode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "OpenCode";
+        }
+
+        if (string.Equals(item.TargetApp, "LM Studio", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(item.TargetApp, "LmStudio", StringComparison.OrdinalIgnoreCase))
+        {
+            return "LmStudio";
+        }
+
+        if (item.Id.Contains("opencode", StringComparison.OrdinalIgnoreCase) ||
+            item.Name.Contains("OpenCode", StringComparison.OrdinalIgnoreCase) ||
+            item.CommandOrUri.Contains("opencode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "OpenCode";
+        }
+
+        if (item.Id.Contains("lm-studio", StringComparison.OrdinalIgnoreCase) ||
+            item.Id.Contains("lmstudio", StringComparison.OrdinalIgnoreCase) ||
+            item.Name.Contains("LM Studio", StringComparison.OrdinalIgnoreCase) ||
+            item.CommandOrUri.Contains("lmstudio", StringComparison.OrdinalIgnoreCase) ||
+            item.CommandOrUri.Contains("localhost:1234", StringComparison.OrdinalIgnoreCase))
+        {
+            return "LmStudio";
+        }
+
+        return "Codex";
     }
 
     private static string T(LocalizationService? strings, string key, string fallback)

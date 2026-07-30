@@ -2,13 +2,14 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:icons="clr-namespace:FluentIcons.Wpf;assembly=FluentIcons.Wpf"
         xmlns:local="clr-namespace:LaptopSessionViewer"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="{Binding Strings[AppTitle]}"
         Icon="pack://application:,,,/Assets/AIHelper.ico"
         Width="1360"
-        Height="740"
+        Height="780"
         MinWidth="1180"
         MinHeight="640"
         WindowStartupLocation="CenterScreen"
@@ -21,6 +22,19 @@
         <local:BindingProxy x:Key="ViewModelProxy"
                             Data="{Binding RelativeSource={RelativeSource AncestorType=Window}}" />
 
+        <Style x:Key="ButtonFocusVisualStyle" TargetType="Control">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border Margin="2"
+                                CornerRadius="14"
+                                BorderBrush="#1D6EA3"
+                                BorderThickness="3" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="MetricCardStyle" TargetType="Border">
             <Setter Property="CornerRadius" Value="12" />
             <Setter Property="Padding" Value="8,7" />
@@ -32,8 +46,8 @@
 
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="#FFFDF9" />
-            <Setter Property="Background" Value="#D97732" />
-            <Setter Property="BorderBrush" Value="#D97732" />
+            <Setter Property="Background" Value="#A84A12" />
+            <Setter Property="BorderBrush" Value="#A84A12" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="12,6" />
             <Setter Property="MinHeight" Value="30" />
@@ -44,10 +58,14 @@
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="TextBlock.TextAlignment" Value="Center" />
             <Setter Property="TextBlock.TextWrapping" Value="Wrap" />
+            <Setter Property="FocusVisualStyle" Value="{StaticResource ButtonFocusVisualStyle}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
+                        <Border x:Name="ButtonChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
                                 Padding="{TemplateBinding Padding}"
                                 CornerRadius="14"
                                 SnapsToDevicePixels="True">
@@ -55,15 +73,40 @@
                                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                               RecognizesAccessKey="True" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonChrome" Property="BorderBrush" Value="#1D6EA3" />
+                                <Setter TargetName="ButtonChrome" Property="BorderThickness" Value="3" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#EA8C49" />
+                    <Setter Property="Background" Value="#8F380A" />
                 </Trigger>
                 <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Opacity" Value="0.6" />
+                    <Setter Property="Opacity" Value="1" />
+                    <Setter Property="Background" Value="#D0D5DD" />
+                    <Setter Property="BorderBrush" Value="#D0D5DD" />
+                    <Setter Property="Foreground" Value="#344054" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SecondaryButtonStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#475467" />
+            <Setter Property="BorderBrush" Value="#475467" />
+            <Setter Property="Foreground" Value="#FFFDF9" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#D0D5DD" />
+                    <Setter Property="BorderBrush" Value="#D0D5DD" />
+                    <Setter Property="Foreground" Value="#344054" />
                 </Trigger>
             </Style.Triggers>
         </Style>
@@ -119,20 +162,30 @@
         </Style>
 
         <Style x:Key="SideNavButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="Padding" Value="12,12" />
             <Setter Property="Margin" Value="0,0,0,10" />
             <Setter Property="FontSize" Value="13" />
+            <Setter Property="BorderThickness" Value="1" />
             <Setter Property="HorizontalContentAlignment" Value="Left" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}"
+                        <Border x:Name="SideNavChrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
                                 Padding="{TemplateBinding Padding}"
                                 CornerRadius="16">
                             <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                               VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
                                               RecognizesAccessKey="True" />
                         </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="SideNavChrome" Property="BorderBrush" Value="#7CC4FF" />
+                                <Setter TargetName="SideNavChrome" Property="BorderThickness" Value="3" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -150,6 +203,14 @@
             <Setter Property="Margin" Value="0,0,10,0" />
             <Setter Property="Padding" Value="12,6" />
             <Setter Property="FontSize" Value="12" />
+        </Style>
+
+        <Style x:Key="CompactPillButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="MinWidth" Value="96" />
+            <Setter Property="Margin" Value="0,0,8,8" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="MinHeight" Value="30" />
         </Style>
 
         <Style x:Key="ActionButtonStyle" TargetType="Button">
@@ -338,7 +399,7 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="{Binding AppOuterMargin}">
+    <Grid Margin="{Binding AppOuterMargin}" Background="#F4EFE6">
         <Border Width="{Binding AppContentWidth}"
                 HorizontalAlignment="Center"
                 Background="Transparent">
@@ -378,39 +439,102 @@
 
                 <StackPanel Grid.Row="2">
                     <Button Style="{StaticResource SideNavButtonStyle}"
+                            Click="HomeSectionButton_Click"
+                            AutomationProperties.Name="{Binding Strings[SectionHomeNav]}"
+                            Background="{Binding HomeSectionButtonBackground}"
+                            BorderBrush="{Binding HomeSectionButtonBackground}"
+                            Foreground="{Binding HomeSectionButtonForeground}">
+                        <StackPanel Orientation="Horizontal">
+                            <icons:FluentIcon Width="18"
+                                              Height="18"
+                                              Margin="0,0,10,0"
+                                              Foreground="{Binding HomeSectionButtonForeground}"
+                                              Icon="Home"
+                                              IconVariant="Regular" />
+                            <TextBlock VerticalAlignment="Center"
+                                       TextWrapping="Wrap"
+                                       Text="{Binding Strings[SectionHomeNav]}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SideNavButtonStyle}"
                             Click="SessionsSectionButton_Click"
+                            AutomationProperties.Name="{Binding Strings[SectionSessionsNav]}"
                             Background="{Binding SessionsSectionButtonBackground}"
                             BorderBrush="{Binding SessionsSectionButtonBackground}"
-                            Foreground="{Binding SessionsSectionButtonForeground}"
-                            Content="{Binding Strings[SectionSessionsNav]}" />
+                            Foreground="{Binding SessionsSectionButtonForeground}">
+                        <StackPanel Orientation="Horizontal">
+                            <icons:FluentIcon Width="18" Height="18" Margin="0,0,10,0"
+                                              Foreground="{Binding SessionsSectionButtonForeground}"
+                                              Icon="History" IconVariant="Regular" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding Strings[SectionSessionsNav]}" />
+                        </StackPanel>
+                    </Button>
                     <Button Style="{StaticResource SideNavButtonStyle}"
                             Click="NewSessionSectionButton_Click"
+                            AutomationProperties.Name="{Binding Strings[SectionNewSessionNav]}"
+                            Visibility="{Binding ExpertOnlyVisibility}"
                             Background="{Binding NewSessionSectionButtonBackground}"
                             BorderBrush="{Binding NewSessionSectionButtonBackground}"
-                            Foreground="{Binding NewSessionSectionButtonForeground}"
-                            Content="{Binding Strings[SectionNewSessionNav]}" />
-                    <Button Style="{StaticResource SideNavButtonStyle}"
-                            Click="ExtensionsSectionButton_Click"
-                            Background="{Binding ExtensionsSectionButtonBackground}"
-                            BorderBrush="{Binding ExtensionsSectionButtonBackground}"
-                            Foreground="{Binding ExtensionsSectionButtonForeground}"
-                            Content="{Binding Strings[SectionExtensionsNav]}" />
+                            Foreground="{Binding NewSessionSectionButtonForeground}">
+                        <StackPanel Orientation="Horizontal">
+                            <icons:FluentIcon Width="18" Height="18" Margin="0,0,10,0"
+                                              Foreground="{Binding NewSessionSectionButtonForeground}"
+                                              Icon="ChatAdd" IconVariant="Regular" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding Strings[SectionNewSessionNav]}" />
+                        </StackPanel>
+                    </Button>
                     <Button Style="{StaticResource SideNavButtonStyle}"
                             Click="SetupSectionButton_Click"
+                            AutomationProperties.Name="{Binding Strings[SectionSetupNav]}"
                             Background="{Binding SetupSectionButtonBackground}"
                             BorderBrush="{Binding SetupSectionButtonBackground}"
-                            Foreground="{Binding SetupSectionButtonForeground}"
-                            Content="{Binding Strings[SectionSetupNav]}" />
+                            Foreground="{Binding SetupSectionButtonForeground}">
+                        <StackPanel Orientation="Horizontal">
+                            <icons:FluentIcon Width="18" Height="18" Margin="0,0,10,0"
+                                              Foreground="{Binding SetupSectionButtonForeground}"
+                                              Icon="ArrowDownload" IconVariant="Regular" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding Strings[SectionSetupNav]}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource SideNavButtonStyle}"
+                            Click="ExtensionsSectionButton_Click"
+                            AutomationProperties.Name="{Binding Strings[SectionExtensionsNav]}"
+                            Background="{Binding ExtensionsSectionButtonBackground}"
+                            BorderBrush="{Binding ExtensionsSectionButtonBackground}"
+                            Foreground="{Binding ExtensionsSectionButtonForeground}">
+                        <StackPanel Orientation="Horizontal">
+                            <icons:FluentIcon Width="18" Height="18" Margin="0,0,10,0"
+                                              Foreground="{Binding ExtensionsSectionButtonForeground}"
+                                              Icon="PuzzlePiece" IconVariant="Regular" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding Strings[SectionExtensionsNav]}" />
+                        </StackPanel>
+                    </Button>
                     <Button Style="{StaticResource SideNavButtonStyle}"
                             Margin="0"
                             Click="SettingsSectionButton_Click"
+                            AutomationProperties.Name="{Binding Strings[SectionSettingsNav]}"
                             Background="{Binding SettingsSectionButtonBackground}"
                             BorderBrush="{Binding SettingsSectionButtonBackground}"
-                            Foreground="{Binding SettingsSectionButtonForeground}"
-                            Content="{Binding Strings[SectionSettingsNav]}" />
+                            Foreground="{Binding SettingsSectionButtonForeground}">
+                        <StackPanel Orientation="Horizontal">
+                            <icons:FluentIcon Width="18" Height="18" Margin="0,0,10,0"
+                                              Foreground="{Binding SettingsSectionButtonForeground}"
+                                              Icon="Settings" IconVariant="Regular" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding Strings[SectionSettingsNav]}" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
                 <StackPanel Grid.Row="4">
+                    <CheckBox Margin="0,0,0,4"
+                              Foreground="#FFFDF9"
+                              IsChecked="{Binding IsBeginnerModeEnabled, Mode=TwoWay}"
+                              Content="{Binding Strings[BeginnerModeLabel]}" />
+                    <TextBlock Margin="24,0,0,12"
+                               FontSize="10"
+                               Foreground="#9FB7C5"
+                               TextWrapping="Wrap"
+                               Text="{Binding Strings[BeginnerModeRecommended]}" />
                     <TextBlock FontSize="11"
                                Foreground="#B7D0DA"
                                Text="{Binding CurrentAppVersionText}" />
@@ -419,6 +543,296 @@
         </Border>
 
         <Grid Grid.Column="2">
+            <Grid Visibility="{Binding HomeSectionVisibility}">
+                <Border Visibility="{Binding BeginnerOnboardingVisibility}"
+                        Padding="26"
+                        CornerRadius="28"
+                        Background="#FFFDF9"
+                        BorderBrush="#E7DBCC"
+                        BorderThickness="1">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition Width="300" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel>
+                                <Border HorizontalAlignment="Left"
+                                        Padding="10,5"
+                                        CornerRadius="12"
+                                        Background="#FCE7C3">
+                                    <TextBlock FontSize="11" FontWeight="Bold" Foreground="#B86E10"
+                                               Text="{Binding Strings[OnboardingEyebrow]}" />
+                                </Border>
+                                <TextBlock Margin="0,14,0,0" FontSize="32" FontWeight="Bold"
+                                           Foreground="#16212B" Text="{Binding Strings[OnboardingTitle]}" />
+                                <TextBlock Margin="0,8,0,0" MaxWidth="680" FontSize="15"
+                                           Foreground="#475467" TextWrapping="Wrap"
+                                           Text="{Binding Strings[OnboardingSubtitle]}" />
+
+                                <UniformGrid Margin="0,22,0,0" Columns="2">
+                                    <Border Margin="0,0,8,8" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <icons:FluentIcon Width="22" Height="22" Foreground="#A84A12" Icon="Laptop" IconVariant="Regular" />
+                                            <TextBlock Margin="0,10,0,0" FontSize="15" FontWeight="Bold" Foreground="#16212B" Text="{Binding Strings[OnboardingStep1Title]}" />
+                                            <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding Strings[OnboardingStep1Text]}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Margin="8,0,0,8" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <icons:FluentIcon Width="22" Height="22" Foreground="#A84A12" Icon="Bot" IconVariant="Regular" />
+                                            <TextBlock Margin="0,10,0,0" FontSize="15" FontWeight="Bold" Foreground="#16212B" Text="{Binding Strings[OnboardingStep2Title]}" />
+                                            <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding Strings[OnboardingStep2Text]}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Margin="0,8,8,0" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <icons:FluentIcon Width="22" Height="22" Foreground="#A84A12" Icon="BrainCircuit" IconVariant="Regular" />
+                                            <TextBlock Margin="0,10,0,0" FontSize="15" FontWeight="Bold" Foreground="#16212B" Text="{Binding Strings[OnboardingStep3Title]}" />
+                                            <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding Strings[OnboardingStep3Text]}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Margin="8,8,0,0" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <icons:FluentIcon Width="22" Height="22" Foreground="#A84A12" Icon="Play" IconVariant="Regular" />
+                                            <TextBlock Margin="0,10,0,0" FontSize="15" FontWeight="Bold" Foreground="#16212B" Text="{Binding Strings[OnboardingStep4Title]}" />
+                                            <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding Strings[OnboardingStep4Text]}" />
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+                            </StackPanel>
+
+                            <Border Grid.Column="2" Padding="20" CornerRadius="24" Background="#16212B">
+                                <StackPanel VerticalAlignment="Center">
+                                    <Border Width="54" Height="54" CornerRadius="27" Background="#274452">
+                                        <icons:FluentIcon Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          Foreground="#F8E7D6" Icon="ShieldCheckmark" IconVariant="Regular" />
+                                    </Border>
+                                    <TextBlock Margin="0,18,0,0" FontSize="20" FontWeight="Bold" Foreground="#FFFDF9"
+                                               TextWrapping="Wrap" Text="{Binding Strings[OnboardingSafetyTitle]}" />
+                                    <TextBlock Margin="0,8,0,0" FontSize="13" Foreground="#C3D2DC" TextWrapping="Wrap"
+                                               Text="{Binding Strings[OnboardingSafetyBody]}" />
+                                    <Button Margin="0,24,0,0" MinHeight="48" Click="StartBeginnerOnboardingButton_Click"
+                                            AutomationProperties.Name="{Binding Strings[OnboardingStart]}"
+                                            Content="{Binding Strings[OnboardingStart]}" />
+                                    <Button Margin="0,10,0,0" Background="#274452" BorderBrush="#274452"
+                                            AutomationProperties.Name="{Binding Strings[OnboardingSkip]}"
+                                            Click="SkipBeginnerOnboardingButton_Click" Content="{Binding Strings[OnboardingSkip]}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </ScrollViewer>
+                </Border>
+
+                <ScrollViewer Visibility="{Binding HomeWorkspaceVisibility}"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                <Grid Margin="0,0,8,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="16" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Padding="18" CornerRadius="28" Background="#FFFDF9" BorderBrush="#E7DBCC" BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock FontSize="{Binding HomeTitleFontSize}" FontWeight="Bold" Foreground="#16212B" Text="{Binding Strings[HomeTitle]}" />
+                            <TextBlock Margin="0,5,0,0" MaxWidth="900" HorizontalAlignment="Left" FontSize="13.5"
+                                       Foreground="#475467" TextWrapping="Wrap" Text="{Binding Strings[HomeSubtitle]}" />
+                            <TextBlock Margin="0,12,0,6" FontSize="13" FontWeight="SemiBold" Foreground="#16212B"
+                                       Text="{Binding Strings[HomePromptLabel]}" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="190" />
+                                </Grid.ColumnDefinitions>
+                                <Grid>
+                                    <TextBox x:Name="HomePromptTextBox"
+                                             MinHeight="{Binding HomePromptHeight}"
+                                             AcceptsReturn="True"
+                                             VerticalContentAlignment="Center"
+                                             Background="#F7F3EC"
+                                             AutomationProperties.Name="{Binding Strings[HomePromptLabel]}"
+                                             ToolTip="{Binding Strings[HomePromptHint]}"
+                                             Text="{Binding NewSessionPrompt, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Margin="15,0"
+                                               VerticalAlignment="Center"
+                                               IsHitTestVisible="False"
+                                               Foreground="#5F6C7B"
+                                               TextTrimming="CharacterEllipsis"
+                                               Text="{Binding Strings[HomePromptHint]}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text.Length, ElementName=HomePromptTextBox}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <Button Grid.Column="2" MinHeight="{Binding HomePromptHeight}" Click="HomeStartSafeSessionButton_Click"
+                                        AutomationProperties.Name="{Binding Strings[HomeStartSafe]}"
+                                        AutomationProperties.HelpText="{Binding HomeStartHelpText}"
+                                        ToolTip="{Binding HomeStartHelpText}"
+                                        IsEnabled="{Binding CanStartHomeSession}">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                        <icons:FluentIcon Width="19" Height="19" Margin="0,0,8,0"
+                                                          Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                          Icon="Play" IconVariant="Filled" />
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings[HomeStartSafe]}" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                            <TextBlock Margin="0,10,0,7" FontSize="12" Foreground="#667085" Text="{Binding Strings[HomeExamplesTitle]}" />
+                            <WrapPanel>
+                                <Button x:Name="HomeExampleExplainButton"
+                                        Margin="0,0,8,0" Padding="12,7" Background="#E7D8CA" BorderBrush="#E7D8CA" Foreground="#16212B"
+                                        AutomationProperties.Name="{Binding Strings[HomeExampleExplain]}"
+                                        Click="HomeExampleButton_Click" Tag="{Binding Strings[HomeExampleExplainPrompt]}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <icons:FluentIcon Width="16" Height="16" Margin="0,0,7,0" Foreground="#16212B" Icon="DocumentText" IconVariant="Regular" />
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings[HomeExampleExplain]}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Margin="0,0,8,0" Padding="12,7" Background="#E7D8CA" BorderBrush="#E7D8CA" Foreground="#16212B"
+                                        AutomationProperties.Name="{Binding Strings[HomeExampleCode]}"
+                                        Click="HomeExampleButton_Click" Tag="{Binding Strings[HomeExampleCodePrompt]}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <icons:FluentIcon Width="16" Height="16" Margin="0,0,7,0" Foreground="#16212B" Icon="Code" IconVariant="Regular" />
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings[HomeExampleCode]}" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Padding="12,7" Background="#E7D8CA" BorderBrush="#E7D8CA" Foreground="#16212B"
+                                        AutomationProperties.Name="{Binding Strings[HomeExampleText]}"
+                                        Click="HomeExampleButton_Click" Tag="{Binding Strings[HomeExampleTextPrompt]}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <icons:FluentIcon Width="16" Height="16" Margin="0,0,7,0" Foreground="#16212B" Icon="TextEditStyle" IconVariant="Regular" />
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding Strings[HomeExampleText]}" />
+                                    </StackPanel>
+                                </Button>
+                            </WrapPanel>
+                            <Border Margin="0,12,0,0"
+                                    Padding="12,10"
+                                    CornerRadius="14"
+                                    Background="{Binding HomeLaunchStatusBackground}"
+                                    Visibility="{Binding HomeLaunchStatusVisibility}">
+                                <TextBlock Foreground="{Binding HomeLaunchStatusForeground}"
+                                           FontWeight="SemiBold"
+                                           TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Assertive"
+                                           Text="{Binding HomeLaunchStatusText}" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="{Binding HomeSafetyColumnWidth}" />
+                        </Grid.ColumnDefinitions>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="14" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <Button Padding="16,12" HorizontalContentAlignment="Stretch" Background="{Binding HomeReadinessBrush}"
+                                    AutomationProperties.Name="{Binding HomeReadinessText}"
+                                    BorderBrush="{Binding HomeReadinessBrush}" Click="HomeOpenSetupButton_Click">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <icons:FluentIcon Width="22" Height="22" Foreground="#FFFDF9" Icon="Settings" IconVariant="Regular" />
+                                    <TextBlock Grid.Column="2" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{Binding HomeReadinessText}" />
+                                    <TextBlock Grid.Column="3" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="12" Text="{Binding Strings[HomeReadinessLink]}" />
+                                </Grid>
+                            </Button>
+                            <Border Grid.Row="2" Padding="18" CornerRadius="24" Background="#FFFDF9" BorderBrush="#E7DBCC" BorderThickness="1">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="12" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock FontSize="18" FontWeight="Bold" Foreground="#16212B" Text="{Binding Strings[HomeRecentTitle]}" />
+                                    <ItemsControl Grid.Row="2" Visibility="{Binding HomeRecentSessionsVisibility}" ItemsSource="{Binding HomeRecentSessions}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Margin="0,0,0,8" Padding="14,10" HorizontalContentAlignment="Stretch"
+                                                        AutomationProperties.Name="{Binding Title}"
+                                                        Background="#F7F3EC" BorderBrush="#F7F3EC" Foreground="#16212B"
+                                                        Click="HomeRecentSessionButton_Click" Tag="{Binding}">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <TextBlock FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="{Binding Title}" />
+                                                            <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="#667085" Text="{Binding UpdatedAtText}" />
+                                                        </StackPanel>
+                                                        <StackPanel Grid.Column="1" Margin="12,0,0,0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                            <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" FontSize="11" Text="{Binding Data.Strings[HomeRecentOpen], Source={StaticResource ViewModelProxy}}" />
+                                                            <icons:FluentIcon Width="16" Height="16" Foreground="#16212B" Icon="ChevronRight" IconVariant="Regular" />
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Grid.Row="2" Visibility="{Binding HomeRecentSessionsEmptyVisibility}" VerticalAlignment="Center"
+                                               HorizontalAlignment="Center" Foreground="#667085" TextWrapping="Wrap" TextAlignment="Center"
+                                               Text="{Binding Strings[HomeRecentEmpty]}" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+
+                        <Border Grid.Column="2" Padding="20" CornerRadius="24" Background="#16212B">
+                            <StackPanel>
+                                <Border Width="50" Height="50" HorizontalAlignment="Left" CornerRadius="25" Background="#274452">
+                                    <icons:FluentIcon Width="26" Height="26" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                      Foreground="#F8E7D6" Icon="ShieldCheckmark" IconVariant="Regular" />
+                                </Border>
+                                <TextBlock Margin="0,16,0,0" FontSize="20" FontWeight="Bold" Foreground="#FFFDF9"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding Strings[HomeSafeTitle]}" />
+                                <TextBlock Margin="0,8,0,0" FontSize="13" Foreground="#C3D2DC" TextWrapping="Wrap"
+                                           Text="{Binding Strings[HomeSafeBody]}" />
+                                <StackPanel Margin="0,18,0,0">
+                                    <StackPanel Margin="0,0,0,10" Orientation="Horizontal">
+                                        <icons:FluentIcon Width="17" Height="17" Margin="0,0,8,0" Foreground="#7DD3A8" Icon="CheckmarkCircle" IconVariant="Regular" />
+                                        <TextBlock VerticalAlignment="Center" Foreground="#FFFDF9" Text="{Binding Strings[HomeSafePointWorkspace]}" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,0,10" Orientation="Horizontal">
+                                        <icons:FluentIcon Width="17" Height="17" Margin="0,0,8,0" Foreground="#7DD3A8" Icon="CheckmarkCircle" IconVariant="Regular" />
+                                        <TextBlock VerticalAlignment="Center" Foreground="#FFFDF9" Text="{Binding Strings[HomeSafePointApprovals]}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <icons:FluentIcon Width="17" Height="17" Margin="0,0,8,0" Foreground="#7DD3A8" Icon="CheckmarkCircle" IconVariant="Regular" />
+                                        <TextBlock VerticalAlignment="Center" Foreground="#FFFDF9" Text="{Binding Strings[HomeSafePointControl]}" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <Button Margin="0,22,0,0" Padding="10,7" Background="#274452" BorderBrush="#274452"
+                                        AutomationProperties.Name="{Binding Strings[HomeAdvancedLaunch]}"
+                                        Click="HomeOpenAdvancedLaunchButton_Click" Content="{Binding Strings[HomeAdvancedLaunch]}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+                </ScrollViewer>
+            </Grid>
+
             <Grid Visibility="{Binding SessionsSectionVisibility}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -476,17 +890,18 @@
                                        FontSize="12"
                                        Foreground="#FFFDF9"
                                        Text="{Binding Strings[SearchLabel]}" />
-                            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox AutomationProperties.Name="{Binding Strings[SearchLabel]}"
+                                     Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
                             <TextBlock Margin="2,2,0,0"
                                        FontSize="9"
                                        Foreground="#F8E7D6"
-                                       TextTrimming="CharacterEllipsis"
+                                       TextWrapping="Wrap"
                                        Text="{Binding Strings[SearchHelp]}" />
                         </StackPanel>
                     </Border>
                 </Grid>
 
-                <Grid Grid.Row="2">
+                <Grid Grid.Row="2" Visibility="{Binding ExpertOnlyVisibility}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
@@ -632,6 +1047,20 @@
                     </Border>
                 </Grid>
 
+                <Border Grid.Row="2"
+                        Visibility="{Binding BeginnerOnlyVisibility}"
+                        Padding="10"
+                        CornerRadius="18"
+                        Background="#203240">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button MinWidth="126" Margin="0,0,8,0" Click="RefreshButton_Click"
+                                IsEnabled="{Binding IsRefreshAvailable}" Content="{Binding Strings[Refresh]}" />
+                        <Button MinWidth="170" Margin="0,0,8,0" Click="ResumeSelectedSessionButton_Click"
+                                IsEnabled="{Binding CanResumeSelectedSession}" Content="{Binding Strings[ResumeInTerminal]}" />
+                        <Button MinWidth="148" Click="ToggleFavoriteButton_Click" Content="{Binding FavoriteButtonText}" />
+                    </StackPanel>
+                </Border>
+
                 <Grid Grid.Row="4"
                       Margin="0,2,0,0">
                     <Grid.ColumnDefinitions>
@@ -725,6 +1154,11 @@
                                                 BorderBrush="{Binding FavoritesTabBackground}"
                                                 Foreground="{Binding FavoritesTabForeground}"
                                                 Content="{Binding FavoritesTabText}" />
+                                        <CheckBox Margin="14,0,0,0"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="#16212B"
+                                                  IsChecked="{Binding ShowHiddenSessions}"
+                                                  Content="{Binding HiddenSessionsToggleText}" />
                                     </StackPanel>
 
                                     <Border Margin="0,12,0,0"
@@ -746,6 +1180,7 @@
 
                                 <Grid Grid.Row="2">
                                     <DataGrid ItemsSource="{Binding Sessions}"
+                                              AutomationProperties.Name="{Binding Strings[SectionSessionsNav]}"
                                               SelectedItem="{Binding SelectedSession, Mode=TwoWay}">
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Width="*"
@@ -766,15 +1201,34 @@
                                                                                Foreground="#9A5A00"
                                                                                Text="{Binding FavoriteBadgeText}" />
                                                                 </Border>
+                                                                <Border Margin="8,0,0,0"
+                                                                        Padding="8,2"
+                                                                        CornerRadius="10"
+                                                                        Background="#E4E7EC"
+                                                                        Visibility="{Binding IsHidden, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                    <TextBlock FontSize="11"
+                                                                               FontWeight="SemiBold"
+                                                                               Foreground="#475467"
+                                                                               Text="{Binding HiddenBadgeText}" />
+                                                                </Border>
                                                             </StackPanel>
                                                             <TextBlock Margin="0,4,0,0"
                                                                        FontSize="12"
                                                                        Foreground="#667085"
                                                                        Text="{Binding SecondaryTitle}"
-                                                                       Visibility="{Binding HasSecondaryTitle, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                                       Visibility="{Binding Data.ExpertOnlyVisibility, Source={StaticResource ViewModelProxy}}" />
+                                                            <TextBlock Margin="0,4,0,0"
+                                                                       FontSize="12"
+                                                                       Foreground="#667085"
+                                                                       MaxHeight="34"
+                                                                       TextWrapping="Wrap"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Visibility="{Binding Data.BeginnerOnlyVisibility, Source={StaticResource ViewModelProxy}}"
+                                                                       Text="{Binding LastMessagePreview}" />
                                                             <TextBlock Margin="0,6,0,0"
                                                                        FontSize="12"
                                                                        Foreground="#667085"
+                                                                       Visibility="{Binding Data.ExpertOnlyVisibility, Source={StaticResource ViewModelProxy}}"
                                                                        Text="{Binding ShortSessionId}" />
                                                         </StackPanel>
                                                     </DataTemplate>
@@ -785,15 +1239,19 @@
                                                                 Header="{Binding Data.Strings[GridUpdated], Source={StaticResource ViewModelProxy}}" />
                                             <DataGridTextColumn Width="78"
                                                                 Binding="{Binding TotalMessageCount}"
+                                                                Visibility="{Binding Data.ExpertOnlyVisibility, Source={StaticResource ViewModelProxy}}"
                                                                 Header="{Binding Data.Strings[GridMessages], Source={StaticResource ViewModelProxy}}" />
                                             <DataGridTextColumn Width="78"
                                                                 Binding="{Binding ToolCallCount}"
+                                                                Visibility="{Binding Data.ExpertOnlyVisibility, Source={StaticResource ViewModelProxy}}"
                                                                 Header="{Binding Data.Strings[GridTools], Source={StaticResource ViewModelProxy}}" />
                                             <DataGridTextColumn Width="92"
                                                                 Binding="{Binding ModelProvider}"
+                                                                Visibility="{Binding Data.ExpertOnlyVisibility, Source={StaticResource ViewModelProxy}}"
                                                                 Header="{Binding Data.Strings[GridModel], Source={StaticResource ViewModelProxy}}" />
                                             <DataGridTextColumn Width="92"
                                                                 Binding="{Binding Source}"
+                                                                Visibility="{Binding Data.ExpertOnlyVisibility, Source={StaticResource ViewModelProxy}}"
                                                                 Header="{Binding Data.Strings[GridSource], Source={StaticResource ViewModelProxy}}" />
                                         </DataGrid.Columns>
                                     </DataGrid>
@@ -838,7 +1296,43 @@
                                                TextWrapping="Wrap"
                                                Text="{Binding SelectedSessionPreviewText}" />
 
+                                    <Border Margin="0,18,0,0"
+                                            Padding="14"
+                                            CornerRadius="18"
+                                            Background="{Binding SelectedSessionHealthBackground}"
+                                            BorderBrush="{Binding SelectedSessionHealthBorder}"
+                                            BorderThickness="1">
+                                        <StackPanel>
+                                            <TextBlock FontSize="15"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding SelectedSessionHealthForeground}"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding SelectedSessionHealthTitle}" />
+                                            <TextBlock Margin="0,7,0,0"
+                                                       FontSize="12"
+                                                       Foreground="#E3EDF3"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding SelectedSessionHealthText}" />
+                                            <Button Margin="0,12,0,0"
+                                                    Style="{StaticResource ActionButtonStyle}"
+                                                    Click="CreateSelectedSessionCheckpointButton_Click"
+                                                    IsEnabled="{Binding CanCreateSelectedSessionCheckpoint}"
+                                                    Content="{Binding Strings[SessionCheckpointButton]}" />
+                                            <Button Margin="0,8,0,0"
+                                                    Style="{StaticResource ActionButtonStyle}"
+                                                    Click="StartFreshSessionFromCheckpointButton_Click"
+                                                    IsEnabled="{Binding CanCreateSelectedSessionCheckpoint}"
+                                                    Content="{Binding Strings[SessionFreshSessionButton]}" />
+                                            <TextBlock Margin="0,9,0,0"
+                                                       FontSize="11"
+                                                       Foreground="#9AB0BE"
+                                                       TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SessionCheckpointPrivacyNote]}" />
+                                        </StackPanel>
+                                    </Border>
+
                                     <Border Margin="0,20,0,0"
+                                            Visibility="{Binding ExpertOnlyVisibility}"
                                             Background="#203240"
                                             CornerRadius="18"
                                             Padding="14">
@@ -906,6 +1400,7 @@
                                                Text="{Binding SelectedSessionFavoriteText}" />
 
                                     <Border Margin="0,18,0,0"
+                                            Visibility="{Binding ExpertOnlyVisibility}"
                                             Padding="12"
                                             CornerRadius="16"
                                             Background="#203240">
@@ -916,29 +1411,45 @@
                                                        Text="{Binding Strings[DetailQuickActions]}" />
                                             <UniformGrid Margin="0,10,0,0"
                                                          Columns="2">
-                                                <Button Margin="0,0,8,0"
+                                                <Button Margin="0,0,8,8"
                                                         Style="{StaticResource ActionButtonStyle}"
                                                         Click="CopySelectedSessionIdButton_Click"
                                                         Content="{Binding Strings[CopySessionId]}" />
-                                                <Button Margin="8,0,0,0"
+                                                <Button Margin="8,0,0,8"
                                                         Style="{StaticResource ActionButtonStyle}"
                                                         Click="OpenSelectedSessionDirectoryButton_Click"
                                                         IsEnabled="{Binding CanOpenSelectedSessionDirectory}"
                                                         Content="{Binding Strings[OpenSessionDirectory]}" />
+                                                <Button Margin="0,0,8,0"
+                                                        Style="{StaticResource ActionButtonStyle}"
+                                                        Click="ToggleSelectedSessionHiddenButton_Click"
+                                                        IsEnabled="{Binding CanToggleSelectedSessionHidden}"
+                                                        Content="{Binding ToggleSessionHiddenButtonText}" />
+                                                <Button Margin="8,0,0,0"
+                                                        Style="{StaticResource ActionButtonStyle}"
+                                                        Click="ArchiveSelectedSessionButton_Click"
+                                                        IsEnabled="{Binding CanArchiveSelectedSession}"
+                                                        Content="{Binding Strings[ArchiveSession]}" />
                                             </UniformGrid>
+                                            <Button Margin="0,10,0,0"
+                                                    Style="{StaticResource ActionButtonStyle}"
+                                                    Click="OpenSessionArchiveButton_Click"
+                                                    Content="{Binding Strings[OpenSessionArchive]}" />
                                         </StackPanel>
                                     </Border>
 
                                     <TextBlock Margin="0,18,0,0"
+                                               Visibility="{Binding ExpertOnlyVisibility}"
                                                FontSize="15"
                                                FontWeight="SemiBold"
                                                Foreground="#FFFDF9"
                                                Text="{Binding Strings[DetailOpenCodeBridge]}" />
                                     <TextBlock Margin="0,8,0,0"
+                                               Visibility="{Binding ExpertOnlyVisibility}"
                                                Foreground="#C3D2DC"
                                                TextWrapping="Wrap"
                                                Text="{Binding SelectedSessionOpenCodeBridgeText}" />
-                                    <StackPanel Margin="0,12,0,0">
+                                    <StackPanel Margin="0,12,0,0" Visibility="{Binding ExpertOnlyVisibility}">
                                         <Button Style="{StaticResource ActionButtonStyle}"
                                                 Click="ResumeSelectedSessionInOpenCodeButton_Click"
                                                 IsEnabled="{Binding CanResumeSelectedSessionInOpenCode}"
@@ -978,19 +1489,20 @@
                                                 Content="{Binding Strings[SaveNote]}" />
                                         <Button Width="108"
                                                 Margin="10,0,0,0"
+                                                Style="{StaticResource SecondaryButtonStyle}"
                                                 Click="ClearSelectedNoteButton_Click"
                                                 IsEnabled="{Binding CanClearSelectedSessionNote}"
-                                                Background="#475467"
-                                                BorderBrush="#475467"
                                                 Content="{Binding Strings[ClearNote]}" />
                                     </StackPanel>
 
                                     <TextBlock Margin="0,18,0,0"
+                                               Visibility="{Binding ExpertOnlyVisibility}"
                                                FontSize="15"
                                                FontWeight="SemiBold"
                                                Foreground="#FFFDF9"
                                                Text="{Binding Strings[DetailSessionFile]}" />
                                     <TextBlock Margin="0,8,0,0"
+                                               Visibility="{Binding ExpertOnlyVisibility}"
                                                Foreground="#C3D2DC"
                                                TextWrapping="Wrap"
                                                Text="{Binding SelectedSession.RelativePath, TargetNullValue=-}" />
@@ -1005,26 +1517,28 @@
                                                TextWrapping="Wrap"
                                                Text="{Binding SelectedSession.LastMessagePreview, TargetNullValue=-}" />
 
-                                    <TextBlock Margin="0,18,0,0"
-                                               FontSize="15"
-                                               FontWeight="SemiBold"
-                                               Foreground="#FFFDF9"
-                                               Text="{Binding Strings[DetailTranscript]}" />
-                                    <ProgressBar Margin="0,10,0,0"
-                                                 Height="6"
-                                                 IsIndeterminate="True"
-                                                 Visibility="{Binding IsSelectedSessionTranscriptLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                    <TextBox Margin="0,10,0,0"
-                                             MinHeight="340"
-                                             AcceptsReturn="True"
-                                             IsReadOnly="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             HorizontalScrollBarVisibility="Disabled"
-                                             FontFamily="Consolas"
-                                             Background="#0F1720"
-                                             Foreground="#E9EEF2"
-                                             Text="{Binding SelectedSessionTranscriptText, Mode=OneWay}" />
+                                    <StackPanel Visibility="{Binding ExpertOnlyVisibility}">
+                                        <TextBlock Margin="0,18,0,0"
+                                                   FontSize="15"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[DetailTranscript]}" />
+                                        <ProgressBar Margin="0,10,0,0"
+                                                     Height="6"
+                                                     IsIndeterminate="True"
+                                                     Visibility="{Binding IsSelectedSessionTranscriptLoading, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <TextBox Margin="0,10,0,0"
+                                                 MinHeight="340"
+                                                 AcceptsReturn="True"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 HorizontalScrollBarVisibility="Disabled"
+                                                 FontFamily="Consolas"
+                                                 Background="#0F1720"
+                                                 Foreground="#E9EEF2"
+                                                 Text="{Binding SelectedSessionTranscriptText, Mode=OneWay}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>
                         </Border>
@@ -1080,8 +1594,16 @@
                             Padding="20"
                             BorderBrush="#E7DBCC"
                             BorderThickness="1">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <StackPanel>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <ScrollViewer Grid.Row="0"
+                                          Margin="0,0,6,0"
+                                          VerticalScrollBarVisibility="Auto">
+                                <StackPanel>
                                 <TextBlock FontSize="14"
                                            FontWeight="SemiBold"
                                            Foreground="#16212B"
@@ -1270,13 +1792,52 @@
                                            TextWrapping="Wrap"
                                            Text="{Binding NewSessionFlagsHelpText}" />
 
-                                <Button Margin="0,18,0,0"
-                                        Height="42"
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <StackPanel Grid.Row="1"
+                                        Margin="0,12,0,0">
+                                <Border Margin="0,0,0,10"
+                                        Padding="12"
+                                        CornerRadius="14"
+                                        Background="{Binding NewSessionAccessSummaryBackground}"
+                                        BorderBrush="{Binding NewSessionAccessSummaryBorder}"
+                                        BorderThickness="1">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold"
+                                                   Foreground="{Binding NewSessionAccessSummaryForeground}"
+                                                   Text="{Binding NewSessionAccessSummaryTitle}" />
+                                        <TextBlock Margin="0,4,0,0"
+                                                   FontSize="12"
+                                                   Foreground="#344054"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding NewSessionAccessSummaryText}" />
+                                        <TextBlock Margin="0,6,0,0"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#344054"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding NewSessionDataRouteText}" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Margin="0,0,0,10"
+                                        Padding="12,10"
+                                        CornerRadius="14"
+                                        Background="#FFF0E8"
+                                        BorderBrush="#D92D20"
+                                        BorderThickness="1"
+                                        Visibility="{Binding NewSessionDangerousWarningVisibility}">
+                                    <TextBlock FontWeight="SemiBold"
+                                               Foreground="#8A1C13"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding Strings[NewSessionDangerousLaunchBanner]}" />
+                                </Border>
+                                <Button Height="44"
                                         Click="LaunchNewSessionButton_Click"
                                         IsEnabled="{Binding CanLaunchNewSession}"
                                         Content="{Binding Strings[NewSessionLaunchButton]}" />
                             </StackPanel>
-                        </ScrollViewer>
+                        </Grid>
                     </Border>
 
                     <Border Grid.Column="2"
@@ -1456,37 +2017,117 @@
                                            TextWrapping="Wrap"
                                            Text="{Binding Strings[ExtensionsLibrarySubtitle]}" />
 
-                                <Border Margin="0,16,0,16"
-                                        Padding="14"
-                                        CornerRadius="18"
-                                        Background="#F7F3EC">
-                                    <TextBlock Foreground="#475467"
-                                               TextWrapping="Wrap"
-                                               Text="{Binding Strings[ExtensionsGuideText]}" />
-                                </Border>
+                                <Grid Margin="0,14,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
 
-                                <DataGrid MinHeight="360"
-                                          ItemsSource="{Binding AiExtensions}"
+                                    <StackPanel>
+                                        <TextBlock FontSize="12"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#16212B"
+                                                   Text="{Binding Strings[ExtensionsSearchLabel]}" />
+                                        <TextBox Margin="0,6,0,0"
+                                                 Text="{Binding ExtensionSearchText, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+
+                                    <WrapPanel Grid.Column="2"
+                                               VerticalAlignment="Bottom">
+                                        <Button MinWidth="134"
+                                                Style="{StaticResource CompactPillButtonStyle}"
+                                                Click="NewCustomPluginButton_Click"
+                                                Content="{Binding Strings[ExtensionsNewPluginButton]}" />
+                                        <Button MinWidth="134"
+                                                Style="{StaticResource CompactPillButtonStyle}"
+                                                Click="NewCustomMcpButton_Click"
+                                                Content="{Binding Strings[ExtensionsNewMcpButton]}" />
+                                    </WrapPanel>
+                                </Grid>
+
+                                <WrapPanel Margin="0,0,0,4">
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="AllExtensionsTargetTabButton_Click"
+                                            Background="{Binding AllExtensionsTargetTabBackground}"
+                                            BorderBrush="{Binding AllExtensionsTargetTabBackground}"
+                                            Foreground="{Binding AllExtensionsTargetTabForeground}"
+                                            Content="{Binding AllExtensionsTargetTabText}" />
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="CodexExtensionsTargetTabButton_Click"
+                                            Background="{Binding CodexExtensionsTargetTabBackground}"
+                                            BorderBrush="{Binding CodexExtensionsTargetTabBackground}"
+                                            Foreground="{Binding CodexExtensionsTargetTabForeground}"
+                                            Content="{Binding CodexExtensionsTargetTabText}" />
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="OpenCodeExtensionsTargetTabButton_Click"
+                                            Background="{Binding OpenCodeExtensionsTargetTabBackground}"
+                                            BorderBrush="{Binding OpenCodeExtensionsTargetTabBackground}"
+                                            Foreground="{Binding OpenCodeExtensionsTargetTabForeground}"
+                                            Content="{Binding OpenCodeExtensionsTargetTabText}" />
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="LmStudioExtensionsTargetTabButton_Click"
+                                            Background="{Binding LmStudioExtensionsTargetTabBackground}"
+                                            BorderBrush="{Binding LmStudioExtensionsTargetTabBackground}"
+                                            Foreground="{Binding LmStudioExtensionsTargetTabForeground}"
+                                            Content="{Binding LmStudioExtensionsTargetTabText}" />
+                                </WrapPanel>
+
+                                <WrapPanel Margin="0,0,0,8">
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="SuggestedExtensionsTabButton_Click"
+                                            Background="{Binding SuggestedExtensionsTabButtonBackground}"
+                                            BorderBrush="{Binding SuggestedExtensionsTabButtonBackground}"
+                                            Foreground="{Binding SuggestedExtensionsTabButtonForeground}"
+                                            Content="{Binding SuggestedExtensionsTabText}" />
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="InstalledExtensionsTabButton_Click"
+                                            Background="{Binding InstalledExtensionsTabButtonBackground}"
+                                            BorderBrush="{Binding InstalledExtensionsTabButtonBackground}"
+                                            Foreground="{Binding InstalledExtensionsTabButtonForeground}"
+                                            Content="{Binding InstalledExtensionsTabText}" />
+                                    <Button Style="{StaticResource CompactPillButtonStyle}"
+                                            Click="CustomExtensionsTabButton_Click"
+                                            Background="{Binding CustomExtensionsTabButtonBackground}"
+                                            BorderBrush="{Binding CustomExtensionsTabButtonBackground}"
+                                            Foreground="{Binding CustomExtensionsTabButtonForeground}"
+                                            Content="{Binding CustomExtensionsTabText}" />
+                                </WrapPanel>
+
+                                <DataGrid MinHeight="390"
+                                          ItemsSource="{Binding DisplayedAiExtensions}"
                                           SelectedItem="{Binding SelectedExtension, Mode=TwoWay}"
                                           AutoGenerateColumns="False"
                                           CanUserAddRows="False"
                                           IsReadOnly="True">
                                     <DataGrid.Columns>
+                                        <DataGridTemplateColumn Width="48"
+                                                                 Header="{Binding Data.Strings[ExtensionsGridEnabled], Source={StaticResource ViewModelProxy}}">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center"
+                                                              IsEnabled="{Binding IsCustom}"
+                                                              IsChecked="{Binding IsActive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                              Click="ExtensionActiveToggle_Click" />
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
                                         <DataGridTextColumn Width="*"
                                                             Binding="{Binding Name}"
                                                             Header="{Binding Data.Strings[ExtensionsGridName], Source={StaticResource ViewModelProxy}}" />
-                                        <DataGridTextColumn Width="86"
-                                                            Binding="{Binding KindLabel}"
-                                                            Header="{Binding Data.Strings[ExtensionsGridType], Source={StaticResource ViewModelProxy}}" />
-                                        <DataGridTextColumn Width="96"
-                                                            Binding="{Binding SourceDisplayLabel}"
-                                                            Header="{Binding Data.Strings[ExtensionsGridSource], Source={StaticResource ViewModelProxy}}" />
-                                        <DataGridTextColumn Width="132"
-                                                            Binding="{Binding InstallStateLabel}"
-                                                            Header="{Binding Data.Strings[ExtensionsGridStatus], Source={StaticResource ViewModelProxy}}" />
-                                        <DataGridTextColumn Width="230"
-                                                            Binding="{Binding CommandOrUri}"
-                                                            Header="{Binding Data.Strings[ExtensionsGridCommand], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="82"
+                                                             Binding="{Binding KindDisplayLabel}"
+                                                             Header="{Binding Data.Strings[ExtensionsGridType], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="92"
+                                                             Binding="{Binding TargetAppDisplayLabel}"
+                                                             Header="{Binding Data.Strings[ExtensionsGridTarget], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="88"
+                                                             Binding="{Binding SourceDisplayLabel}"
+                                                             Header="{Binding Data.Strings[ExtensionsGridSource], Source={StaticResource ViewModelProxy}}" />
+                                        <DataGridTextColumn Width="120"
+                                                             Binding="{Binding InstallStateLabel}"
+                                                             Header="{Binding Data.Strings[ExtensionsGridStatus], Source={StaticResource ViewModelProxy}}" />
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </StackPanel>
@@ -1526,11 +2167,11 @@
 
                                         <UniformGrid Margin="0,16,0,0"
                                                      Columns="2"
-                                                     Rows="2">
-                                            <Button Margin="0,0,8,8"
-                                                    Click="InstallSelectedExtensionButton_Click"
-                                                    IsEnabled="{Binding CanInstallSelectedExtension}"
-                                                    Content="{Binding Strings[ExtensionsInstallButton]}" />
+                                                     Rows="3">
+                                             <Button Margin="0,0,8,8"
+                                                     Click="InstallSelectedExtensionButton_Click"
+                                                     IsEnabled="{Binding CanInstallSelectedExtension}"
+                                                     Content="{Binding SelectedExtensionPrimaryActionText}" />
                                             <Button Margin="0,0,0,8"
                                                     Click="EnableSelectedExtensionButton_Click"
                                                     IsEnabled="{Binding CanEnableSelectedExtension}"
@@ -1543,6 +2184,10 @@
                                                     Click="RemoveSelectedExtensionButton_Click"
                                                     IsEnabled="{Binding CanRemoveSelectedExtension}"
                                                     Content="{Binding Strings[ExtensionsRemoveButton]}" />
+                                            <Button Margin="0,8,8,0"
+                                                    Click="OpenSelectedExtensionLocationButton_Click"
+                                                    IsEnabled="{Binding CanOpenSelectedExtensionLocation}"
+                                                    Content="{Binding Strings[ExtensionsOpenLocationButton]}" />
                                         </UniformGrid>
                                     </StackPanel>
                                 </Border>
@@ -1577,6 +2222,16 @@
                                                   DisplayMemberPath="DisplayName"
                                                   SelectedValuePath="Value"
                                                   SelectedValue="{Binding SelectedExtensionKind, Mode=TwoWay}" />
+
+                                        <TextBlock Margin="0,12,0,0"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FFFDF9"
+                                                   Text="{Binding Strings[ExtensionsTargetLabel]}" />
+                                        <ComboBox Margin="0,6,0,0"
+                                                  ItemsSource="{Binding ExtensionTargetOptions}"
+                                                  DisplayMemberPath="DisplayName"
+                                                  SelectedValuePath="Value"
+                                                  SelectedValue="{Binding ExtensionTargetApp, Mode=TwoWay}" />
 
                                         <TextBlock Margin="0,12,0,0"
                                                    FontWeight="SemiBold"
@@ -1682,7 +2337,7 @@
                                    FontSize="12"
                                    Foreground="#F8E7D6"
                                    TextWrapping="Wrap"
-                                   Text="{Binding Strings[SetupSubtitle]}" />
+                                   Text="{Binding SetupSubtitleText}" />
                     </StackPanel>
                 </Border>
 
@@ -1693,9 +2348,136 @@
                         <ColumnDefinition Width="{Binding SettingsAsideColumnWidth}" />
                     </Grid.ColumnDefinitions>
 
+                    <Border Grid.ColumnSpan="3"
+                            Padding="22"
+                            CornerRadius="28"
+                            Background="#FFFDF9"
+                            Visibility="{Binding BeginnerOnlyVisibility}">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <TextBlock FontSize="24"
+                                           FontWeight="Bold"
+                                           Foreground="#16212B"
+                                           Text="{Binding Strings[SetupBeginnerTitle]}" />
+                                <TextBlock Margin="0,8,0,0"
+                                           FontSize="14"
+                                           Foreground="#475467"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding Strings[SetupBeginnerSubtitle]}" />
+
+                                <Border Margin="0,18,0,0"
+                                        Padding="14"
+                                        CornerRadius="18"
+                                        Background="{Binding HomeReadinessBrush}">
+                                    <TextBlock Foreground="#FFFDF9"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               TextWrapping="Wrap"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Text="{Binding HomeReadinessText}" />
+                                </Border>
+
+                                <Grid Margin="0,16,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="12" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <TextBlock FontSize="16" FontWeight="Bold" Foreground="#16212B"
+                                                       Text="{Binding Strings[SetupBeginnerStep1Title]}" />
+                                            <TextBlock Margin="0,7,0,0" Foreground="#475467" TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SetupBeginnerStep1Text]}" />
+                                            <Button Margin="0,14,0,0"
+                                                    Click="InstallCodexStackButton_Click"
+                                                    Content="{Binding Strings[SetupInstallStackButton]}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="2" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <TextBlock FontSize="16" FontWeight="Bold" Foreground="#16212B"
+                                                       Text="{Binding Strings[SetupBeginnerStep2Title]}" />
+                                            <TextBlock Margin="0,7,0,0" Foreground="#475467" TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SetupBeginnerStep2Text]}" />
+                                            <Button Margin="0,14,0,0"
+                                                    Click="LaunchCodexLoginButton_Click"
+                                                    IsEnabled="{Binding CanLaunchCodexLogin}"
+                                                    Content="{Binding Strings[SetupLoginButton]}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="4" Padding="16" CornerRadius="20" Background="#F7F3EC">
+                                        <StackPanel>
+                                            <TextBlock FontSize="16" FontWeight="Bold" Foreground="#16212B"
+                                                       Text="{Binding Strings[SetupBeginnerStep3Title]}" />
+                                            <TextBlock Margin="0,7,0,0" Foreground="#475467" TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SetupBeginnerStep3Text]}" />
+                                            <Button Margin="0,14,0,0"
+                                                    Click="RefreshSetupStatusButton_Click"
+                                                    Content="{Binding Strings[SetupRefreshButton]}" />
+                                            <Button Margin="0,8,0,0"
+                                                    Click="HomeSectionButton_Click"
+                                                    IsEnabled="{Binding IsHomeEnvironmentReady}"
+                                                    Content="{Binding Strings[SetupBeginnerBackHome]}" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Border Margin="0,16,0,0"
+                                        Padding="16"
+                                        CornerRadius="20"
+                                        Background="#EEF2F5">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="14" />
+                                            <ColumnDefinition Width="210" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock FontSize="16" FontWeight="Bold" Foreground="#16212B"
+                                                       Text="{Binding Strings[SetupBeginnerOptionalTitle]}" />
+                                            <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SetupBeginnerOptionalText]}" />
+                                            <TextBlock Margin="0,8,0,0"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{Binding BeginnerSetupLocalAiStatusBrush}"
+                                                       Text="{Binding BeginnerSetupLocalAiStatusText}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2">
+                                            <Button Click="InstallOllamaButton_Click"
+                                                    IsEnabled="{Binding CanInstallLocalAiTools}"
+                                                    Content="{Binding Strings[SetupBeginnerInstallOllama]}" />
+                                            <Button Margin="0,8,0,0"
+                                                    Style="{StaticResource SecondaryButtonStyle}"
+                                                    Click="InstallLmStudioButton_Click"
+                                                    IsEnabled="{Binding CanInstallLocalAiTools}"
+                                                    Content="{Binding Strings[SetupBeginnerInstallLmStudio]}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <Border Margin="0,16,0,0"
+                                        Padding="12"
+                                        CornerRadius="16"
+                                        Background="#EEF2F5">
+                                    <TextBlock Foreground="{Binding SetupStatusForeground}"
+                                               TextWrapping="Wrap"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Text="{Binding SetupStatusText}" />
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
+
                     <Border Background="#FFFDF9"
                             CornerRadius="28"
-                            Padding="20">
+                            Padding="20"
+                            Visibility="{Binding ExpertOnlyVisibility}">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -1725,12 +2507,12 @@
                                         <TextBlock FontSize="12"
                                                    FontWeight="SemiBold"
                                                    Foreground="{Binding SetupStatusForeground}"
-                                                   TextTrimming="CharacterEllipsis"
+                                                   TextWrapping="Wrap"
                                                    Text="{Binding SetupStatusText}" />
                                         <TextBlock Grid.Column="2"
                                                    FontSize="12"
                                                    Foreground="#475467"
-                                                   TextTrimming="CharacterEllipsis"
+                                                   TextWrapping="Wrap"
                                                    Text="{Binding SetupRecommendedNextStepText}" />
                                     </Grid>
 
@@ -1763,7 +2545,7 @@
                                                                FontWeight="Bold"
                                                                Foreground="#FFFDF9"
                                                                TextTrimming="CharacterEllipsis"
-                                                               Text="{Binding Strings[SetupCoreSectionTitle]}" />
+                                                               Text="{Binding Strings[SetupCoreSummaryTitle]}" />
                                                     <TextBlock Grid.Column="1"
                                                                Margin="8,0,0,0"
                                                                FontSize="13"
@@ -1789,7 +2571,7 @@
                                                                FontWeight="Bold"
                                                                Foreground="#FFFDF9"
                                                                TextTrimming="CharacterEllipsis"
-                                                               Text="{Binding Strings[SetupCodexSectionTitle]}" />
+                                                               Text="{Binding Strings[SetupCodexSummaryTitle]}" />
                                                     <TextBlock Grid.Column="1"
                                                                Margin="8,0,0,0"
                                                                FontSize="13"
@@ -1815,7 +2597,7 @@
                                                                FontWeight="Bold"
                                                                Foreground="#FFFDF9"
                                                                TextTrimming="CharacterEllipsis"
-                                                               Text="{Binding Strings[SetupLocalAiSectionTitle]}" />
+                                                               Text="{Binding Strings[SetupLocalAiSummaryTitle]}" />
                                                     <TextBlock Grid.Column="1"
                                                                Margin="8,0,0,0"
                                                                FontSize="13"
@@ -2157,6 +2939,55 @@
 
                                             <StackPanel Margin="0,14,0,0"
                                                         Visibility="{Binding SetupLocalAiSectionContentVisibility}">
+                                                <Border Margin="0,0,0,14"
+                                                        Padding="16"
+                                                        CornerRadius="20"
+                                                        Background="#EAF3F0"
+                                                        BorderBrush="#C4DDD3"
+                                                        BorderThickness="1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel Margin="0,0,16,0">
+                                                            <TextBlock FontSize="15"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="#16212B"
+                                                                       Text="{Binding Strings[SetupHardwareTitle]}" />
+                                                            <TextBlock Margin="0,6,0,0"
+                                                                       Foreground="#344054"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding HardwareOverviewText}" />
+                                                            <TextBlock Margin="0,8,0,0"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{Binding HardwareStatusBrush}"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding HardwareRecommendationText}" />
+                                                            <TextBlock Margin="0,8,0,0"
+                                                                       FontSize="12"
+                                                                       Foreground="#475467"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding LocalAiStorageSummaryText}" />
+                                                            <TextBlock Margin="0,8,0,0"
+                                                                       FontSize="12"
+                                                                       Foreground="#475467"
+                                                                       TextWrapping="Wrap"
+                                                                       Text="{Binding Strings[SetupLocalAiPrivacyNote]}" />
+                                                        </StackPanel>
+                                                        <Border Grid.Column="1"
+                                                                Padding="10,5"
+                                                                VerticalAlignment="Top"
+                                                                CornerRadius="12"
+                                                                Background="{Binding HardwareStatusBrush}">
+                                                            <TextBlock FontSize="11"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#FFFDF9"
+                                                                       Text="{Binding Strings[SetupHardwareCheckedBadge]}" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Border>
+
                                                 <ItemsControl ItemsSource="{Binding SetupLocalAiChecks}"
                                                               ItemTemplate="{StaticResource SetupCheckItemTemplate}" />
 
@@ -2301,22 +3132,54 @@
                                                                                    Text="{Binding ModelTag}" />
                                                                     </StackPanel>
 
-                                                                    <Border Grid.Column="1"
-                                                                            Margin="12,0,0,0"
-                                                                            Padding="10,4"
-                                                                            CornerRadius="12"
-                                                                            Background="#2D5366">
-                                                                        <TextBlock FontSize="11"
-                                                                                   FontWeight="SemiBold"
-                                                                                   Foreground="#FFFDF9"
-                                                                                   Text="{Binding SizeLabel}" />
-                                                                    </Border>
+                                                                    <StackPanel Grid.Column="1"
+                                                                                Margin="12,0,0,0">
+                                                                        <Border Padding="10,4"
+                                                                                CornerRadius="12"
+                                                                                Background="#2D5366">
+                                                                            <TextBlock FontSize="11"
+                                                                                       FontWeight="SemiBold"
+                                                                                       Foreground="#FFFDF9"
+                                                                                       Text="{Binding SizeLabel}" />
+                                                                        </Border>
+                                                                        <Border Margin="0,6,0,0"
+                                                                                Padding="10,4"
+                                                                                CornerRadius="12"
+                                                                                Background="#1F7A52"
+                                                                                Visibility="{Binding IsRecommended, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                            <TextBlock FontSize="11"
+                                                                                       FontWeight="SemiBold"
+                                                                                       Foreground="#FFFDF9"
+                                                                                       Text="{Binding Data.Strings[SetupLocalAiRecommendedBadge], Source={StaticResource ViewModelProxy}}" />
+                                                                        </Border>
+                                                                    </StackPanel>
                                                                 </Grid>
 
                                                                 <TextBlock Margin="0,8,0,0"
                                                                            Foreground="#475467"
                                                                            TextWrapping="Wrap"
                                                                            Text="{Binding Description}" />
+
+                                                                <Grid Margin="0,10,0,0">
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="Auto" />
+                                                                        <ColumnDefinition Width="*" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <Border Padding="10,4"
+                                                                            CornerRadius="12"
+                                                                            Background="{Binding FitStatusBrush}">
+                                                                        <TextBlock FontSize="11"
+                                                                                   FontWeight="SemiBold"
+                                                                                   Foreground="#FFFDF9"
+                                                                                   Text="{Binding FitStatusText}" />
+                                                                    </Border>
+                                                                    <TextBlock Grid.Column="1"
+                                                                               Margin="10,0,0,0"
+                                                                               VerticalAlignment="Center"
+                                                                               Foreground="#475467"
+                                                                               TextWrapping="Wrap"
+                                                                               Text="{Binding RecommendationText}" />
+                                                                </Grid>
 
                                                                 <Grid Margin="0,10,0,0">
                                                                     <Grid.ColumnDefinitions>
@@ -2731,7 +3594,8 @@
                     <Border Grid.Column="2"
                             Background="#16212B"
                             CornerRadius="28"
-                            Padding="20">
+                            Padding="20"
+                            Visibility="{Binding ExpertOnlyVisibility}">
                         <ScrollViewer VerticalScrollBarVisibility="Auto">
                             <StackPanel>
                                 <Border Padding="16"
@@ -2971,6 +3835,7 @@
                                     Orientation="Horizontal">
                             <Button Style="{StaticResource SessionTabButtonStyle}"
                                     Click="NeuralSettingsTabButton_Click"
+                                    Visibility="{Binding ExpertOnlyVisibility}"
                                     Background="{Binding NeuralSettingsTabBackground}"
                                     BorderBrush="{Binding NeuralSettingsTabBackground}"
                                     Foreground="{Binding NeuralSettingsTabForeground}"
@@ -3091,6 +3956,24 @@
                                                Foreground="#475467"
                                                TextWrapping="Wrap"
                                                Text="{Binding Strings[SettingsAppSubtitle]}" />
+
+                                    <Border Margin="0,18,0,0"
+                                            Padding="16"
+                                            CornerRadius="22"
+                                            Background="#F7F3EC">
+                                        <StackPanel>
+                                            <TextBlock FontSize="16" FontWeight="Bold" Foreground="#16212B"
+                                                       Text="{Binding Strings[SettingsExperienceTitle]}" />
+                                            <TextBlock Margin="0,8,0,0" Foreground="#475467" TextWrapping="Wrap"
+                                                       Text="{Binding Strings[SettingsExperienceHelp]}" />
+                                            <CheckBox Margin="0,14,0,0"
+                                                      IsChecked="{Binding IsBeginnerModeEnabled, Mode=TwoWay}"
+                                                      Content="{Binding Strings[SettingsExperienceToggle]}" />
+                                            <Button Margin="0,10,0,0" Style="{StaticResource SecondaryButtonStyle}"
+                                                    Click="ReplayBeginnerOnboardingButton_Click"
+                                                    Content="{Binding Strings[SettingsReplayOnboarding]}" />
+                                        </StackPanel>
+                                    </Border>
 
                                     <Border Margin="0,18,0,0"
                                             Padding="16"

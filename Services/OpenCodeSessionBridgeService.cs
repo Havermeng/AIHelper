@@ -8,6 +8,7 @@ namespace LaptopSessionViewer.Services;
 
 public sealed class OpenCodeSessionBridgeService
 {
+    private static readonly TimeSpan HandoffRetention = TimeSpan.FromDays(30);
     private readonly AppLogService _logService;
 
     public OpenCodeSessionBridgeService(AppLogService logService)
@@ -52,12 +53,20 @@ public sealed class OpenCodeSessionBridgeService
         if (!string.IsNullOrWhiteSpace(directoryPath))
         {
             Directory.CreateDirectory(directoryPath);
+            DeleteExpiredHandoffs(directoryPath);
         }
 
-        File.WriteAllText(
-            handoffPath,
-            BuildHandoffMarkdown(conversation, sessionTitle, workingDirectory),
-            Encoding.UTF8);
+        using (var stream = new FileStream(
+                   handoffPath,
+                   FileMode.CreateNew,
+                   FileAccess.Write,
+                   FileShare.None))
+        using (var writer = new StreamWriter(
+                   stream,
+                   new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+        {
+            writer.Write(BuildHandoffMarkdown(conversation, sessionTitle, workingDirectory));
+        }
 
         _logService.Info(
             nameof(OpenCodeSessionBridgeService),
@@ -82,7 +91,9 @@ public sealed class OpenCodeSessionBridgeService
             nameof(OpenCodeSessionBridgeService),
             $"LaunchSession requested. Handoff={linkRecord.OpenCodeSessionId}; Cwd={linkRecord.WorkingDirectory}; File={linkRecord.HandoffPath ?? "-"}");
 
-        if (string.IsNullOrWhiteSpace(linkRecord.HandoffPath) || !File.Exists(linkRecord.HandoffPath))
+        if (string.IsNullOrWhiteSpace(linkRecord.HandoffPath) ||
+            !IsManagedHandoffPath(linkRecord.HandoffPath) ||
+            !File.Exists(linkRecord.HandoffPath))
         {
             throw new FileNotFoundException("OpenCode handoff file was not found. Refresh the OpenCode bridge first.", linkRecord.HandoffPath);
         }
@@ -286,17 +297,87 @@ public sealed class OpenCodeSessionBridgeService
 
     private static string BuildHandoffId(string codexSessionId)
     {
-        return $"handoff_{codexSessionId.Replace('-', '_')}_{Guid.NewGuid().ToString("N")[..8]}";
+        return $"handoff_{SanitizeIdentifier(codexSessionId)}_{Guid.NewGuid().ToString("N")[..8]}";
     }
 
     private static string BuildHandoffPath(string codexSessionId, string handoffId)
     {
-        var safeCodexId = Regex.Replace(codexSessionId, "[^a-zA-Z0-9_-]", "_");
-        return Path.Combine(
+        var root = GetHandoffRoot();
+        var safeCodexId = SanitizeIdentifier(codexSessionId);
+        var safeHandoffId = SanitizeIdentifier(handoffId);
+        var path = Path.GetFullPath(Path.Combine(
+            root,
+            $"{safeCodexId}-{safeHandoffId}.md"));
+
+        if (!IsPathInsideRoot(path, root))
+        {
+            throw new InvalidOperationException("The generated OpenCode handoff path escaped its managed folder.");
+        }
+
+        return path;
+    }
+
+    private static string GetHandoffRoot()
+    {
+        return Path.GetFullPath(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AIHelper",
-            "opencode-bridge",
-            $"{safeCodexId}-{handoffId}.md");
+            "opencode-bridge"));
+    }
+
+    private static string SanitizeIdentifier(string value)
+    {
+        var sanitized = Regex.Replace(value ?? string.Empty, "[^a-zA-Z0-9_-]", "_").Trim('_');
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            sanitized = "session";
+        }
+
+        return sanitized.Length <= 80 ? sanitized : sanitized[..80];
+    }
+
+    private static bool IsManagedHandoffPath(string path)
+    {
+        try
+        {
+            return IsPathInsideRoot(Path.GetFullPath(path), GetHandoffRoot());
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathInsideRoot(string path, string root)
+    {
+        var normalizedRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedPath = Path.GetFullPath(path);
+        return normalizedPath.StartsWith(
+            normalizedRoot + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void DeleteExpiredHandoffs(string directoryPath)
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow - HandoffRetention;
+            foreach (var file in new DirectoryInfo(directoryPath).EnumerateFiles("*.md", SearchOption.TopDirectoryOnly))
+            {
+                if ((file.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                    file.LastWriteTimeUtc >= cutoff)
+                {
+                    continue;
+                }
+
+                file.Delete();
+            }
+        }
+        catch
+        {
+            // Retention cleanup must not block creation of a fresh handoff.
+        }
     }
 
     private static string NormalizeMetadataValue(string value)

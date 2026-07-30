@@ -9,8 +9,12 @@ public sealed class AppUpdateSnapshot
     public string ReleaseTitle { get; init; } = string.Empty;
     public string ReleasePageUrl { get; init; } = string.Empty;
     public string InstallerDownloadUrl { get; init; } = string.Empty;
+    public string InstallerChecksumUrl { get; init; } = string.Empty;
     public DateTimeOffset? PublishedAtUtc { get; init; }
     public bool IsUpdateAvailable { get; init; }
+    public bool IsCurrentVersionNewerThanLatest { get; init; }
 
-    public bool HasInstallerAsset => !string.IsNullOrWhiteSpace(InstallerDownloadUrl);
+    public bool HasInstallerAsset =>
+        !string.IsNullOrWhiteSpace(InstallerDownloadUrl) &&
+        !string.IsNullOrWhiteSpace(InstallerChecksumUrl);
 }

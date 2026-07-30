@@ -2,6 +2,7 @@
 using System.IO;
 using Microsoft.Win32;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -52,6 +53,10 @@ public sealed class CodexEnvironmentService
     public string OpenCodeCommandPath =>
         GetCachedPath("opencode-command-path", ResolveOpenCodeExecutablePath) ??
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "opencode.cmd");
+
+    public string ClaudeCommandPath =>
+        GetCachedPath("claude-command-path", ResolveClaudeExecutablePath) ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "claude.cmd");
 
     public string SessionsFolder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
@@ -138,6 +143,11 @@ public sealed class CodexEnvironmentService
                 RunCommand("cmd.exe", $"/c \"\"{openClawPath}\" --version\""))
             : CommandResult.Missing);
         var installedOllamaModelsTask = Task.Run(() => GetCachedOllamaModels(ollamaPath));
+        var hardwareTask = Task.Run(ProbeHardware);
+        var ollamaProcessorTask = Task.Run(() => !string.IsNullOrWhiteSpace(ollamaPath)
+            ? GetCachedCommandResult($"cmd:ollama:ps:{ollamaPath}", SnapshotCommandCacheDuration, () =>
+                RunCommand(ollamaPath, "ps", timeoutMilliseconds: 5000))
+            : CommandResult.Missing);
 
         Task.WaitAll(
             wingetTask,
@@ -154,7 +164,9 @@ public sealed class CodexEnvironmentService
             pinokioPackageTask,
             ollamaVersionTask,
             openClawVersionTask,
-            installedOllamaModelsTask);
+            installedOllamaModelsTask,
+            hardwareTask,
+            ollamaProcessorTask);
 
         var winget = wingetTask.Result;
         var node = nodeTask.Result;
@@ -171,6 +183,8 @@ public sealed class CodexEnvironmentService
         var ollamaVersion = ollamaVersionTask.Result;
         var openClawVersion = openClawVersionTask.Result;
         var installedOllamaModels = installedOllamaModelsTask.Result;
+        var hardware = hardwareTask.Result;
+        var ollamaProcessor = ollamaProcessorTask.Result;
         var ollamaServerRunning = !string.IsNullOrWhiteSpace(ollamaPath) && IsLocalTcpEndpointReachable(11434);
         var ollamaTrayRunning = IsAnyProcessRunning("ollama");
         var ollamaModelsSummary = BuildOllamaModelsSummary(installedOllamaModels);
@@ -180,6 +194,15 @@ public sealed class CodexEnvironmentService
 
         return new CodexEnvironmentSnapshot
         {
+            GpuName = hardware.GpuName,
+            GpuMemoryBytes = hardware.GpuMemoryBytes,
+            GpuMemoryIsEstimated = hardware.GpuMemoryIsEstimated,
+            GpuDriverVersion = hardware.GpuDriverVersion,
+            TotalPhysicalMemoryBytes = hardware.TotalPhysicalMemoryBytes,
+            AvailablePhysicalMemoryBytes = hardware.AvailablePhysicalMemoryBytes,
+            SystemDriveFreeBytes = hardware.SystemDriveFreeBytes,
+            OllamaModelStorageBytes = SumOllamaModelSizes(installedOllamaModels.Values),
+            OllamaProcessorSummary = BuildOllamaProcessorSummary(ollamaProcessor),
             WingetAvailable = winget.Success,
             WingetVersion = winget.Output,
             NodeAvailable = node.Success,
@@ -349,16 +372,29 @@ public sealed class CodexEnvironmentService
         return string.IsNullOrWhiteSpace(args) ? "codex" : $"codex {args}";
     }
 
-    public void LaunchInteractiveSession(NewSessionLaunchOptions options)
+    public string LaunchInteractiveSession(NewSessionLaunchOptions options)
     {
         var workingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
             options.WorkingDirectory,
             Guid.NewGuid().ToString("N"),
             string.IsNullOrWhiteSpace(options.Prompt) ? "New Codex Session" : options.Prompt,
-            out _);
+            out var createdFallbackWorkspace);
 
-        var arguments = BuildInteractiveArguments(options, workingDirectory);
-        StartCodexProcess(arguments, workingDirectory);
+        try
+        {
+            var arguments = BuildInteractiveArgumentList(options, workingDirectory);
+            StartCodexProcess(arguments, workingDirectory);
+            return workingDirectory;
+        }
+        catch
+        {
+            if (createdFallbackWorkspace)
+            {
+                AiHelperWorkspaceService.TryDeleteGeneratedWorkspace(workingDirectory);
+            }
+
+            throw;
+        }
     }
 
     public void LaunchResumeSession(string sessionId, string workingDirectory, IReadOnlyList<string>? imagePaths = null)
@@ -379,12 +415,35 @@ public sealed class CodexEnvironmentService
             foreach (var imagePath in imagePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
             {
                 arguments.Add("-i");
-                arguments.Add(QuoteForCommandLine(imagePath));
+                arguments.Add(imagePath);
             }
         }
 
-        arguments.Add(QuoteForCommandLine(sessionId));
-        StartCodexProcess(string.Join(" ", arguments), normalizedWorkingDirectory);
+        arguments.Add(sessionId);
+        StartCodexProcess(arguments, normalizedWorkingDirectory);
+    }
+
+    public void LaunchClaudeResumeSession(string sessionId, string workingDirectory)
+    {
+        var normalizedWorkingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
+            workingDirectory,
+            sessionId,
+            "Resumed Claude Code Session",
+            out _);
+
+        var launchPath = ClaudeCommandPath;
+
+        if (string.IsNullOrWhiteSpace(launchPath) || !File.Exists(launchPath))
+        {
+            throw new FileNotFoundException("Claude Code CLI executable was not found.", launchPath);
+        }
+
+        StartCliProcess(
+            launchPath,
+            ["--resume", sessionId],
+            normalizedWorkingDirectory,
+            supportPath: null,
+            windowTitle: "AIHelper Claude Code");
     }
 
     public void LaunchCodexInstallRepairTerminal()
@@ -767,7 +826,7 @@ public sealed class CodexEnvironmentService
 
     public void LaunchCodexLoginTerminal()
     {
-        StartCodexProcess("login", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        StartCodexProcess(["login"], Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
     }
 
     public static void OpenFolder(string path)
@@ -782,28 +841,37 @@ public sealed class CodexEnvironmentService
 
     private string BuildInteractiveArguments(NewSessionLaunchOptions options, string workingDirectory)
     {
-        var arguments = new List<string>
+        return string.Join(" ", BuildInteractiveArgumentList(options, workingDirectory).Select(FormatArgumentForPreview));
+    }
+
+    private static IReadOnlyList<string> BuildInteractiveArgumentList(
+        NewSessionLaunchOptions options,
+        string workingDirectory)
+    {
+        var arguments = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(workingDirectory))
         {
-            "-C",
-            QuoteForCommandLine(workingDirectory)
-        };
+            arguments.Add("-C");
+            arguments.Add(workingDirectory);
+        }
 
         foreach (var imagePath in options.ImagePaths.Where(path => !string.IsNullOrWhiteSpace(path)))
         {
             arguments.Add("-i");
-            arguments.Add(QuoteForCommandLine(imagePath));
+            arguments.Add(imagePath);
         }
 
         if (!string.IsNullOrWhiteSpace(options.Model))
         {
             arguments.Add("-m");
-            arguments.Add(QuoteForCommandLine(options.Model.Trim()));
+            arguments.Add(options.Model.Trim());
         }
 
         if (!string.IsNullOrWhiteSpace(options.Profile))
         {
             arguments.Add("-p");
-            arguments.Add(QuoteForCommandLine(options.Profile.Trim()));
+            arguments.Add(options.Profile.Trim());
         }
 
         if (options.UseDangerousBypass)
@@ -843,10 +911,10 @@ public sealed class CodexEnvironmentService
 
         if (!string.IsNullOrWhiteSpace(options.Prompt))
         {
-            arguments.Add(QuoteForCommandLine(options.Prompt.Trim()));
+            arguments.Add(options.Prompt.Trim());
         }
 
-        return string.Join(" ", arguments);
+        return arguments;
     }
 
     private void LaunchWingetInstallTerminal(string scriptSuffix, string packageId, string label)
@@ -1911,6 +1979,165 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         }
     }
 
+    private static HardwareProbeResult ProbeHardware()
+    {
+        var totalPhysicalMemoryBytes = 0L;
+        var availablePhysicalMemoryBytes = 0L;
+        var memoryStatus = new MemoryStatusEx();
+
+        if (GlobalMemoryStatusEx(memoryStatus))
+        {
+            totalPhysicalMemoryBytes = ToSignedLong(memoryStatus.TotalPhysicalMemory);
+            availablePhysicalMemoryBytes = ToSignedLong(memoryStatus.AvailablePhysicalMemory);
+        }
+
+        var systemDriveFreeBytes = 0L;
+
+        try
+        {
+            var systemRoot = Path.GetPathRoot(Environment.SystemDirectory);
+            if (!string.IsNullOrWhiteSpace(systemRoot))
+            {
+                systemDriveFreeBytes = new DriveInfo(systemRoot).AvailableFreeSpace;
+            }
+        }
+        catch
+        {
+            systemDriveFreeBytes = 0;
+        }
+
+        var nvidiaSmiPath = ResolveExecutableOnPath("nvidia-smi.exe") ??
+                            FindExistingPath(
+                                Path.Combine(
+                                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                                    "NVIDIA Corporation",
+                                    "NVSMI",
+                                    "nvidia-smi.exe"),
+                                Path.Combine(
+                                    Environment.GetFolderPath(Environment.SpecialFolder.System),
+                                    "nvidia-smi.exe"));
+
+        if (!string.IsNullOrWhiteSpace(nvidiaSmiPath))
+        {
+            var nvidiaResult = RunCommand(
+                nvidiaSmiPath,
+                "--query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits",
+                timeoutMilliseconds: 5000);
+
+            if (nvidiaResult.Success)
+            {
+                var firstGpu = nvidiaResult.Output
+                    .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .FirstOrDefault();
+                var columns = firstGpu?.Split(',', StringSplitOptions.TrimEntries);
+
+                if (columns is { Length: >= 3 } &&
+                    long.TryParse(columns[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var memoryMb))
+                {
+                    return new HardwareProbeResult(
+                        columns[0],
+                        memoryMb * 1024L * 1024L,
+                        false,
+                        columns[2],
+                        totalPhysicalMemoryBytes,
+                        availablePhysicalMemoryBytes,
+                        systemDriveFreeBytes);
+                }
+            }
+        }
+
+        var fallbackResult = RunCommand(
+            "powershell.exe",
+            "-NoProfile -NonInteractive -Command \"$gpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Sort-Object AdapterRAM -Descending | Select-Object -First 1; if ($null -ne $gpu) { '{0}|{1}|{2}' -f $gpu.Name, ([uint64]$gpu.AdapterRAM), $gpu.DriverVersion }\"",
+            timeoutMilliseconds: 6000);
+
+        if (fallbackResult.Success)
+        {
+            var values = fallbackResult.Output.Split('|', StringSplitOptions.TrimEntries);
+
+            if (values.Length >= 3)
+            {
+                _ = long.TryParse(
+                    values[1],
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var adapterMemoryBytes);
+                return new HardwareProbeResult(
+                    values[0],
+                    adapterMemoryBytes,
+                    true,
+                    values[2],
+                    totalPhysicalMemoryBytes,
+                    availablePhysicalMemoryBytes,
+                    systemDriveFreeBytes);
+            }
+        }
+
+        return new HardwareProbeResult(
+            string.Empty,
+            0,
+            true,
+            string.Empty,
+            totalPhysicalMemoryBytes,
+            availablePhysicalMemoryBytes,
+            systemDriveFreeBytes);
+    }
+
+    private static string BuildOllamaProcessorSummary(CommandResult result)
+    {
+        if (!result.Success || string.IsNullOrWhiteSpace(result.Output) || result.Output == "-")
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            " | ",
+            result.Output
+                .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(line => !line.StartsWith("NAME", StringComparison.OrdinalIgnoreCase))
+                .Take(2));
+    }
+
+    private static long SumOllamaModelSizes(IEnumerable<string> values)
+    {
+        var total = 0d;
+
+        foreach (var value in values)
+        {
+            var match = Regex.Match(
+                value,
+                "(?<number>[0-9]+(?:[\\.,][0-9]+)?)\\s*(?<unit>KB|MB|GB|TB)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+            if (!match.Success ||
+                !double.TryParse(
+                    match.Groups["number"].Value.Replace(',', '.'),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var number))
+            {
+                continue;
+            }
+
+            var multiplier = match.Groups["unit"].Value.ToUpperInvariant() switch
+            {
+                "KB" => 1024d,
+                "MB" => 1024d * 1024d,
+                "GB" => 1024d * 1024d * 1024d,
+                "TB" => 1024d * 1024d * 1024d * 1024d,
+                _ => 1d
+            };
+            total += number * multiplier;
+        }
+
+        return total >= long.MaxValue ? long.MaxValue : (long)total;
+    }
+
+    private static long ToSignedLong(ulong value)
+    {
+        return value >= long.MaxValue ? long.MaxValue : (long)value;
+    }
+
     private static string GetProductVersion(string executablePath)
     {
         try
@@ -1965,6 +2192,20 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 
         return FindExistingPath(
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "codex.cmd"));
+    }
+
+    private static string? ResolveClaudeExecutablePath()
+    {
+        var knownPath = FindExistingPath(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", "claude.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "claude.cmd"));
+
+        if (!string.IsNullOrWhiteSpace(knownPath))
+        {
+            return knownPath;
+        }
+
+        return ResolveExecutableOnPath("claude.cmd", "claude.exe", "claude");
     }
 
     private static string? ResolveOpenCodeExecutablePath()
@@ -2474,6 +2715,13 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
         return $"\"{value.Replace("\"", "\"\"")}\"";
     }
 
+    private static string FormatArgumentForPreview(string value)
+    {
+        return Regex.IsMatch(value, "^[a-zA-Z0-9._:/\\\\-]+$")
+            ? value
+            : QuoteForCommandLine(value);
+    }
+
     private static string BuildOpenCodeInvocation(string commandPath, string arguments)
     {
         var launchCommand = commandPath.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase)
@@ -2485,52 +2733,112 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
             : $"{launchCommand} {arguments}";
     }
 
-    private void StartCodexProcess(string arguments, string workingDirectory)
+    private void StartCodexProcess(IReadOnlyList<string> arguments, string workingDirectory)
     {
-        var command = BuildCodexTerminalCommand(arguments);
+        var launchPath = ResolveCodexNativeExecutablePath() ?? CodexCommandPath;
+        if (string.IsNullOrWhiteSpace(launchPath) || !File.Exists(launchPath))
+        {
+            throw new FileNotFoundException("Codex CLI executable was not found.", launchPath);
+        }
 
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/k {QuoteForCommandLine(command)}",
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = true
-            });
+        StartCliProcess(
+            launchPath,
+            arguments,
+            workingDirectory,
+            ResolveCodexSupportPathDirectory(launchPath),
+            windowTitle: "AIHelper Codex");
     }
 
-    private string BuildCodexTerminalCommand(string arguments)
+    private static void StartCliProcess(
+        string launchPath,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        string? supportPath,
+        string windowTitle)
     {
-        var launchPath = CodexCommandPath;
-        var launchCommand = string.IsNullOrWhiteSpace(arguments)
-            ? QuoteForCommandLine(launchPath)
-            : $"{QuoteForCommandLine(launchPath)} {arguments}";
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"aihelper-cli-{Guid.NewGuid():N}.ps1");
+        File.WriteAllText(
+            scriptPath,
+            BuildCliLaunchScript(launchPath, workingDirectory, arguments, supportPath, windowTitle),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        var supportPath = ResolveCodexSupportPathDirectory(launchPath);
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = true
+        };
+        startInfo.ArgumentList.Add("-NoLogo");
+        startInfo.ArgumentList.Add("-NoExit");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
 
-        return string.IsNullOrWhiteSpace(supportPath)
-            ? $"title AIHelper Codex && {launchCommand}"
-            : $"title AIHelper Codex && set \"PATH={supportPath};%PATH%\" && {launchCommand}";
+        Process.Start(startInfo);
+    }
+
+    private static string BuildCliLaunchScript(
+        string launchPath,
+        string workingDirectory,
+        IReadOnlyList<string> arguments,
+        string? supportPath,
+        string windowTitle)
+    {
+        var argumentLines = string.Join(
+            $",{Environment.NewLine}",
+            arguments.Select(argument => $"    '{EscapeForSingleQuotedPowerShell(argument)}'"));
+        var supportPathLine = string.IsNullOrWhiteSpace(supportPath)
+            ? string.Empty
+            : $"$env:PATH = '{EscapeForSingleQuotedPowerShell(supportPath)};' + $env:PATH";
+
+        return $$"""
+$ErrorActionPreference = 'Stop'
+$Host.UI.RawUI.WindowTitle = '{{EscapeForSingleQuotedPowerShell(windowTitle)}}'
+Set-Location -LiteralPath '{{EscapeForSingleQuotedPowerShell(workingDirectory)}}'
+{{supportPathLine}}
+$cliPath = '{{EscapeForSingleQuotedPowerShell(launchPath)}}'
+$cliArguments = @(
+{{argumentLines}}
+)
+
+try {
+    & $cliPath @cliArguments
+}
+finally {
+    Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
+}
+""";
     }
 
     private static string? ResolveCodexNativeExecutablePath()
     {
-        var commandPath = ResolveExecutableOnPath("codex.exe");
-
-        if (!string.IsNullOrWhiteSpace(commandPath))
-        {
-            return commandPath;
-        }
-
         var applicationData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
-        return FindExistingPath(
+        var installedNativePath = FindExistingPath(
             Path.Combine(localApplicationData, "Microsoft", "WinGet", "Links", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-arm64", "vendor", "aarch64-pc-windows-msvc", "bin", "codex.exe"),
             Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"),
             Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-arm64", "vendor", "aarch64-pc-windows-msvc", "codex", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"),
+            Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "vendor", "aarch64-pc-windows-msvc", "bin", "codex.exe"),
             Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "vendor", "x86_64-pc-windows-msvc", "codex", "codex.exe"),
             Path.Combine(applicationData, "npm", "node_modules", "@openai", "codex", "vendor", "aarch64-pc-windows-msvc", "codex", "codex.exe"));
+
+        if (!string.IsNullOrWhiteSpace(installedNativePath))
+        {
+            return installedNativePath;
+        }
+
+        var commandPath = ResolveExecutableOnPath("codex.exe");
+        return !string.IsNullOrWhiteSpace(commandPath) &&
+               !commandPath.Contains(
+                   $"{Path.DirectorySeparatorChar}WindowsApps{Path.DirectorySeparatorChar}OpenAI.Codex_",
+                   StringComparison.OrdinalIgnoreCase)
+            ? commandPath
+            : null;
     }
 
     private static string? ResolveCodexSupportPathDirectory(string codexExecutablePath)
@@ -2588,6 +2896,33 @@ Write-Host 'Return to AIHelper and refresh the environment status.' -ForegroundC
 
         return null;
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx([In, Out] MemoryStatusEx buffer);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private sealed class MemoryStatusEx
+    {
+        public uint Length = (uint)Marshal.SizeOf<MemoryStatusEx>();
+        public uint MemoryLoad;
+        public ulong TotalPhysicalMemory;
+        public ulong AvailablePhysicalMemory;
+        public ulong TotalPageFile;
+        public ulong AvailablePageFile;
+        public ulong TotalVirtual;
+        public ulong AvailableVirtual;
+        public ulong AvailableExtendedVirtual;
+    }
+
+    private readonly record struct HardwareProbeResult(
+        string GpuName,
+        long GpuMemoryBytes,
+        bool GpuMemoryIsEstimated,
+        string GpuDriverVersion,
+        long TotalPhysicalMemoryBytes,
+        long AvailablePhysicalMemoryBytes,
+        long SystemDriveFreeBytes);
 
     private readonly record struct CommandResult(bool Success, string Output)
     {

@@ -3,8 +3,14 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using LaptopSessionViewer.Models;
 using LaptopSessionViewer.Services;
@@ -26,6 +32,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly AppLogService _logService = new();
     private readonly AiExtensionCatalogService _extensionCatalogService = new();
     private readonly CodexEnvironmentService _environmentService = new();
+    private readonly AiExtensionManagementService _extensionManagementService;
     private readonly AppUpdateService _updateService = new();
     private readonly CodexPhotoPasteFixService _photoPasteFixService;
     private readonly DnsManagementService _dnsManagementService = new();
@@ -35,6 +42,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private readonly SessionFavoritesService _favoritesService = new();
     private readonly SessionNotesService _notesService = new();
     private readonly SessionService _sessionService = new();
+    private readonly SessionFeedExportService _sessionFeedExportService = new();
+    private readonly SessionCheckpointService _checkpointService = new();
+    private readonly SessionVisibilityService _sessionVisibilityService = new();
     private readonly SessionViewerSettingsService _settingsService = new();
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _searchDebounceTimer;
@@ -44,6 +54,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private FileSystemWatcher? _sessionIndexWatcher;
     private List<SessionRecord> _allSessions = [];
     private HashSet<string> _favoriteSessionIds = [];
+    private HashSet<string> _hiddenSessionIds = [];
     private Dictionary<string, OpenCodeSessionLinkRecord> _openCodeLinks = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _sessionNotes = new(StringComparer.OrdinalIgnoreCase);
     private bool _autoRefreshEnabled = true;
@@ -52,8 +63,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isRefreshing;
     private bool _isDnsBusy;
     private bool _isApplyingDangerousAccessDefaults;
+    private bool _isBeginnerModeEnabled = true;
+    private bool _beginnerOnboardingInProgress;
+    private bool _hasCompletedBeginnerOnboarding;
     private bool _isSessionsSurfaceInitialized;
     private bool _isSetupBusy;
+    private bool _showHiddenSessions;
     private bool _isSetupCodexSectionExpanded;
     private bool _isSetupCoreSectionExpanded;
     private bool _isSetupDnsSectionExpanded;
@@ -70,8 +85,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _extensionDescription = string.Empty;
     private bool _extensionIsEnabled = true;
     private string _extensionName = string.Empty;
+    private string _extensionSearchText = string.Empty;
     private string _extensionStatusForeground = "#F8E7D6";
     private string _extensionStatusText = string.Empty;
+    private string _homeLaunchStatusBackground = "#E7F6EE";
+    private string _homeLaunchStatusForeground = "#1F6F4A";
+    private string _homeLaunchStatusText = string.Empty;
     private DateTime? _lastUpdatedAtLocal;
     private string _lastUpdatedText = string.Empty;
     private string _newSessionModel = string.Empty;
@@ -81,21 +100,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _newSessionStatusText = string.Empty;
     private bool _newSessionUseOss;
     private bool _newSessionUseSearch;
-    private string _newSessionWorkingDirectory =
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    private string _newSessionWorkingDirectory = string.Empty;
     private string _primaryDnsServer = string.Empty;
     private DnsAdapterRecord? _selectedDnsAdapter;
     private DnsPreset? _selectedDnsPreset;
     private AiExtensionItem? _selectedExtension;
     private string _selectedExtensionKind = "Plugin";
+    private string _selectedExtensionTarget = "All";
+    private string _extensionTargetApp = "Codex";
     private string _selectedApprovalPolicy = "on-request";
-    private AppSection _selectedAppSection = AppSection.Sessions;
+    private AppSection _selectedAppSection = AppSection.Home;
     private string _searchText = string.Empty;
     private string _secondaryDnsServer = string.Empty;
     private string _selectedLocalProvider = string.Empty;
     private string _selectedSessionTranscriptText = string.Empty;
     private string _selectedSandboxMode = "workspace-write";
-    private SettingsCategoryTab _selectedSettingsCategoryTab = SettingsCategoryTab.NeuralSettings;
+    private SettingsCategoryTab _selectedSettingsCategoryTab = SettingsCategoryTab.AppSettings;
     private SessionListTab _selectedSessionListTab = SessionListTab.Sessions;
     private LanguageOption? _selectedLanguageOption;
     private bool _settingsDangerousFullAccess;
@@ -118,9 +138,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isExtensionsSectionInitialized;
     private bool _isSetupSectionInitialized;
     private bool _isSettingsSectionInitialized;
+    private bool _isDetectedExtensionsRefreshRunning;
+    private bool _isManagedExtensionsRefreshRunning;
+    private bool _showCustomExtensionsTab;
+    private bool _showBeginnerOnboarding;
+    private bool _showInstalledExtensionsTab;
     private bool _startupRefreshScheduled;
     private DateTime _setupRefreshBoostUntilUtc = DateTime.MinValue;
-    private string _setupStatusForeground = "#F8E7D6";
+    private string _setupStatusForeground = "#1F6F4A";
     private string _setupStatusText = string.Empty;
     private string _updateStatusForeground = "#F8E7D6";
     private string _updateStatusKey = "UpdateStatusReady";
@@ -143,7 +168,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Strings.SetLanguage(initialSettings.Language);
         _settingsDangerousFullAccess = initialSettings.DefaultDangerousFullAccess;
         _settingsPhotoPasteFixEnabled = initialSettings.PhotoPasteFixEnabled;
+        _isBeginnerModeEnabled = initialSettings.BeginnerModeEnabled;
+        _hasCompletedBeginnerOnboarding = initialSettings.HasCompletedBeginnerOnboarding;
+        _showBeginnerOnboarding = _isBeginnerModeEnabled && !_hasCompletedBeginnerOnboarding;
         _selectedLanguageOption = LanguageOptions.First(option => option.Language == initialSettings.Language);
+        _extensionManagementService = new AiExtensionManagementService(_environmentService, _logService);
         _openCodeBridgeService = new OpenCodeSessionBridgeService(_logService);
         _photoPasteFixService = new CodexPhotoPasteFixService(_logService);
         LoadSessionMetadata();
@@ -153,6 +182,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         InitializeComponent();
         DataContext = this;
+        AddHandler(PreviewMouseWheelEvent, new MouseWheelEventHandler(RouteMouseWheelToScrollableParent), true);
         LogStartupPhase("InitializeComponent completed.");
         RefreshLocalizedChromeText();
         RefreshSectionChromeText();
@@ -217,7 +247,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<AiExtensionItem> AiExtensions { get; } = [];
 
+    public ObservableCollection<AiExtensionItem> SuggestedAiExtensions { get; } = [];
+
+    public ObservableCollection<AiExtensionItem> InstalledAiExtensions { get; } = [];
+
+    public ObservableCollection<AiExtensionItem> CustomAiExtensions { get; } = [];
+
     public ObservableCollection<LaunchOption> ExtensionKindOptions { get; } = [];
+
+    public ObservableCollection<LaunchOption> ExtensionTargetOptions { get; } = [];
 
     public ObservableCollection<LaunchOption> SandboxModeOptions { get; } = [];
 
@@ -299,6 +337,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<SessionRecord> Sessions { get; } = [];
 
+    public ObservableCollection<SessionRecord> HomeRecentSessions { get; } = [];
+
     public Thickness AppOuterMargin =>
         IsWideWindowLayout ? new Thickness(16) : IsCompactWindowLayout ? new Thickness(10) : new Thickness(12);
 
@@ -310,13 +350,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var measuredWidth = ActualWidth > 0 ? ActualWidth : Width;
             var margin = AppOuterMargin;
-            var availableWidth = Math.Max(0, measuredWidth - margin.Left - margin.Right);
+            var availableWidth = Math.Max(0, measuredWidth - margin.Left - margin.Right - 16);
             return Math.Min(AppContentMaxWidth, availableWidth);
         }
     }
 
     public GridLength ShellSidebarColumnWidth =>
-        new(IsWideWindowLayout ? 204 : IsCompactWindowLayout ? 176 : 190);
+        new(IsWideWindowLayout ? 240 : IsCompactWindowLayout ? 224 : 232);
 
     public GridLength ShellMainGapColumnWidth =>
         new(IsWideWindowLayout ? 16 : IsCompactWindowLayout ? 10 : 12);
@@ -339,6 +379,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public GridLength SettingsAsideColumnWidth =>
         SharedAsideColumnWidth;
 
+    public double HomeTitleFontSize => IsCompactWindowLayout ? 30 : 36;
+
+    public double HomePromptHeight => IsCompactWindowLayout ? 54 : 78;
+
+    public GridLength HomeSafetyColumnWidth => new(IsCompactWindowLayout ? 260 : 250);
+
     private GridLength SharedAsideColumnWidth =>
         new(IsWideWindowLayout ? 416 : IsCompactWindowLayout ? 336 : 370);
 
@@ -350,6 +396,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _selectedAppSection, value))
             {
                 EnsureSectionDataInitialized(value);
+                OnPropertyChanged(nameof(HomeSectionButtonBackground));
+                OnPropertyChanged(nameof(HomeSectionButtonForeground));
                 OnPropertyChanged(nameof(SessionsSectionButtonBackground));
                 OnPropertyChanged(nameof(SessionsSectionButtonForeground));
                 OnPropertyChanged(nameof(NewSessionSectionButtonBackground));
@@ -360,6 +408,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(SetupSectionButtonForeground));
                 OnPropertyChanged(nameof(SettingsSectionButtonBackground));
                 OnPropertyChanged(nameof(SettingsSectionButtonForeground));
+                OnPropertyChanged(nameof(HomeSectionVisibility));
                 OnPropertyChanged(nameof(SessionsSectionVisibility));
                 OnPropertyChanged(nameof(NewSessionSectionVisibility));
                 OnPropertyChanged(nameof(ExtensionsSectionVisibility));
@@ -370,6 +419,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
                 if (value == AppSection.Setup && IsLoaded)
                 {
+                    _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
+                }
+
+                if (value == AppSection.Home && IsLoaded && _lastEnvironmentSnapshot is null)
+                {
+                    EnsureSectionDataInitialized(AppSection.Setup);
                     _ = RefreshSetupSectionAsync(preserveDnsStatus: true);
                 }
 
@@ -387,33 +442,168 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public string SessionsSectionButtonBackground =>
-        SelectedAppSection == AppSection.Sessions ? "#D97732" : "#1D3545";
+    public string HomeSectionButtonBackground =>
+        SelectedAppSection == AppSection.Home ? "#F7F3EC" : "#1D3545";
 
-    public string SessionsSectionButtonForeground => "#FFFDF9";
+    public string HomeSectionButtonForeground =>
+        SelectedAppSection == AppSection.Home ? "#16212B" : "#FFFDF9";
+
+    public string SessionsSectionButtonBackground =>
+        SelectedAppSection == AppSection.Sessions ? "#F7F3EC" : "#1D3545";
+
+    public string SessionsSectionButtonForeground =>
+        SelectedAppSection == AppSection.Sessions ? "#16212B" : "#FFFDF9";
 
     public string NewSessionSectionButtonBackground =>
-        SelectedAppSection == AppSection.NewSession ? "#D97732" : "#1D3545";
+        SelectedAppSection == AppSection.NewSession ? "#F7F3EC" : "#1D3545";
 
-    public string NewSessionSectionButtonForeground => "#FFFDF9";
+    public string NewSessionSectionButtonForeground =>
+        SelectedAppSection == AppSection.NewSession ? "#16212B" : "#FFFDF9";
 
     public string ExtensionsSectionButtonBackground =>
-        SelectedAppSection == AppSection.Extensions ? "#D97732" : "#1D3545";
+        SelectedAppSection == AppSection.Extensions ? "#F7F3EC" : "#1D3545";
 
-    public string ExtensionsSectionButtonForeground => "#FFFDF9";
+    public string ExtensionsSectionButtonForeground =>
+        SelectedAppSection == AppSection.Extensions ? "#16212B" : "#FFFDF9";
 
     public string SetupSectionButtonBackground =>
-        SelectedAppSection == AppSection.Setup ? "#D97732" : "#1D3545";
+        SelectedAppSection == AppSection.Setup ? "#F7F3EC" : "#1D3545";
 
-    public string SetupSectionButtonForeground => "#FFFDF9";
+    public string SetupSectionButtonForeground =>
+        SelectedAppSection == AppSection.Setup ? "#16212B" : "#FFFDF9";
 
     public string SettingsSectionButtonBackground =>
-        SelectedAppSection == AppSection.Settings ? "#D97732" : "#1D3545";
+        SelectedAppSection == AppSection.Settings ? "#F7F3EC" : "#1D3545";
 
-    public string SettingsSectionButtonForeground => "#FFFDF9";
+    public string SettingsSectionButtonForeground =>
+        SelectedAppSection == AppSection.Settings ? "#16212B" : "#FFFDF9";
 
     public Visibility SessionsSectionVisibility =>
         SelectedAppSection == AppSection.Sessions ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility HomeSectionVisibility =>
+        SelectedAppSection == AppSection.Home ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool IsBeginnerModeEnabled
+    {
+        get => _isBeginnerModeEnabled;
+        set
+        {
+            if (!SetField(ref _isBeginnerModeEnabled, value))
+            {
+                return;
+            }
+
+            _settingsService.SaveBeginnerModeEnabled(value);
+
+            if (value)
+            {
+                SelectedSettingsCategoryTab = SettingsCategoryTab.AppSettings;
+                _showBeginnerOnboarding = !_hasCompletedBeginnerOnboarding;
+                SelectedAppSection = AppSection.Home;
+            }
+
+            OnPropertyChanged(nameof(ExpertOnlyVisibility));
+            OnPropertyChanged(nameof(BeginnerOnlyVisibility));
+            OnPropertyChanged(nameof(BeginnerOnboardingVisibility));
+            OnPropertyChanged(nameof(HomeWorkspaceVisibility));
+            OnPropertyChanged(nameof(SetupSubtitleText));
+        }
+    }
+
+    public Visibility ExpertOnlyVisibility =>
+        IsBeginnerModeEnabled ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility BeginnerOnlyVisibility =>
+        IsBeginnerModeEnabled ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility BeginnerOnboardingVisibility =>
+        IsBeginnerModeEnabled && _showBeginnerOnboarding ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility HomeWorkspaceVisibility =>
+        !IsBeginnerModeEnabled || !_showBeginnerOnboarding ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool HasHomeRecentSessions => HomeRecentSessions.Count > 0;
+
+    public Visibility HomeRecentSessionsVisibility =>
+        HasHomeRecentSessions ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility HomeRecentSessionsEmptyVisibility =>
+        HasHomeRecentSessions ? Visibility.Collapsed : Visibility.Visible;
+
+    public string SetupSubtitleText =>
+        IsBeginnerModeEnabled ? Strings["SetupBeginnerSubtitle"] : Strings["SetupSubtitle"];
+
+    public bool IsHomeEnvironmentReady =>
+        _lastEnvironmentSnapshot is not null &&
+        _lastEnvironmentSnapshot.CodexAvailable &&
+        _lastEnvironmentSnapshot.LoggedIn;
+
+    public bool CanStartHomeSession =>
+        IsHomeEnvironmentReady &&
+        !string.IsNullOrWhiteSpace(NewSessionPrompt);
+
+    public string HomeReadinessText =>
+        _lastEnvironmentSnapshot is null
+            ? Strings["HomeReadinessChecking"]
+            : !_lastEnvironmentSnapshot.CodexAvailable
+                ? Strings["HomeReadinessNeedsCodex"]
+                : !_lastEnvironmentSnapshot.LoggedIn
+                    ? Strings["HomeReadinessNeedsLogin"]
+                    : Strings["HomeReadinessReady"];
+
+    public string HomeReadinessBrush =>
+        _lastEnvironmentSnapshot is null ? "#355364" : IsHomeEnvironmentReady ? "#1F7A52" : "#8A4B08";
+
+    public string HomeStartHelpText =>
+        !IsHomeEnvironmentReady
+            ? Strings["HomeLaunchSetupRequired"]
+            : string.IsNullOrWhiteSpace(NewSessionPrompt)
+                ? Strings["HomeLaunchPromptRequired"]
+                : Strings["HomeStartSafe"];
+
+    public string HomeLaunchStatusText
+    {
+        get => _homeLaunchStatusText;
+        private set
+        {
+            if (SetField(ref _homeLaunchStatusText, value))
+            {
+                OnPropertyChanged(nameof(HomeLaunchStatusVisibility));
+            }
+        }
+    }
+
+    public string HomeLaunchStatusForeground
+    {
+        get => _homeLaunchStatusForeground;
+        private set => SetField(ref _homeLaunchStatusForeground, value);
+    }
+
+    public string HomeLaunchStatusBackground
+    {
+        get => _homeLaunchStatusBackground;
+        private set => SetField(ref _homeLaunchStatusBackground, value);
+    }
+
+    public Visibility HomeLaunchStatusVisibility =>
+        string.IsNullOrWhiteSpace(HomeLaunchStatusText) ? Visibility.Collapsed : Visibility.Visible;
+
+    public string BeginnerSetupLocalAiStatusText =>
+        _lastEnvironmentSnapshot is null
+            ? Strings["SetupBeginnerChecking"]
+            : _lastEnvironmentSnapshot.OllamaAvailable ||
+              _lastEnvironmentSnapshot.OllamaAppAvailable ||
+              _lastEnvironmentSnapshot.LmStudioAvailable
+                ? Strings["SetupBeginnerLocalAiInstalled"]
+                : Strings["SetupBeginnerLocalAiOptional"];
+
+    public string BeginnerSetupLocalAiStatusBrush =>
+        _lastEnvironmentSnapshot?.OllamaAvailable == true ||
+        _lastEnvironmentSnapshot?.OllamaAppAvailable == true ||
+        _lastEnvironmentSnapshot?.LmStudioAvailable == true
+            ? "#1F7A52"
+            : "#667085";
 
     public object? SessionsMainContent => _isSessionsSurfaceInitialized ? true : null;
 
@@ -479,6 +669,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public string FavoritesTabText => $"{Strings["FavoritesTab"]} ({FavoriteSessions})";
 
+    public string HiddenSessionsToggleText => Strings.Format("ShowHiddenSessions", HiddenSessions);
+
+    public bool ShowHiddenSessions
+    {
+        get => _showHiddenSessions;
+        set
+        {
+            if (SetField(ref _showHiddenSessions, value))
+            {
+                ApplyFilter();
+            }
+        }
+    }
+
     public bool HasVisibleSessions => Sessions.Count > 0;
 
     public string EmptySessionsText =>
@@ -533,10 +737,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanDeleteSelectedSession =>
         SelectedSession is not null && File.Exists(SelectedSession.FilePath);
 
+    public bool CanArchiveSelectedSession =>
+        SelectedSession is not null && File.Exists(SelectedSession.FilePath);
+
+    public bool CanToggleSelectedSessionHidden => SelectedSession is not null;
+
+    public string ToggleSessionHiddenButtonText =>
+        SelectedSession?.IsHidden == true ? Strings["ShowSessionInList"] : Strings["HideSessionFromList"];
+
     public bool CanResumeSelectedSession =>
         SelectedSession is not null &&
         !string.IsNullOrWhiteSpace(SelectedSession.SessionId) &&
-        File.Exists(_environmentService.CodexCommandPath);
+        ((SelectedSession.IsCodexSession && File.Exists(_environmentService.CodexCommandPath)) ||
+         (SelectedSession.IsClaudeSession && File.Exists(_environmentService.ClaudeCommandPath)));
 
     public bool CanOpenSelectedSessionDirectory =>
         SelectedSession is not null &&
@@ -588,7 +801,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedSession is not null &&
         Directory.Exists(SelectedSession.WorkingDirectory);
 
+    public bool CanCreateSelectedSessionCheckpoint => SelectedSession is not null;
+
     public bool CanLaunchNewSession =>
+        !string.IsNullOrWhiteSpace(NewSessionPrompt) &&
         File.Exists(_environmentService.CodexCommandPath) &&
         Directory.Exists(GetNormalizedNewSessionWorkingDirectory());
 
@@ -948,6 +1164,58 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string SetupLocalAiSummaryBrush =>
         _lastEnvironmentSnapshot is null ? "#2D5366" : GetSetupSummaryBrush(GetLocalAiReadyCount(_lastEnvironmentSnapshot), 4);
 
+    public string HardwareOverviewText
+    {
+        get
+        {
+            var snapshot = _lastEnvironmentSnapshot;
+
+            if (snapshot is null)
+            {
+                return Strings["SetupHardwarePending"];
+            }
+
+            var gpuName = string.IsNullOrWhiteSpace(snapshot.GpuName)
+                ? Strings["SetupHardwareGpuUnknown"]
+                : snapshot.GpuName;
+            var gpuMemory = snapshot.GpuMemoryBytes > 0
+                ? FormatByteSize(snapshot.GpuMemoryBytes)
+                : Strings["SetupHardwareMemoryUnknown"];
+
+            return Strings.Format(
+                "SetupHardwareOverviewFormat",
+                gpuName,
+                gpuMemory,
+                FormatByteSize(snapshot.TotalPhysicalMemoryBytes),
+                FormatByteSize(snapshot.SystemDriveFreeBytes));
+        }
+    }
+
+    public string HardwareRecommendationText =>
+        GetHardwareRecommendationText(_lastEnvironmentSnapshot);
+
+    public string HardwareStatusBrush =>
+        GetHardwareStatusBrush(_lastEnvironmentSnapshot);
+
+    public string LocalAiStorageSummaryText
+    {
+        get
+        {
+            var snapshot = _lastEnvironmentSnapshot;
+
+            if (snapshot is null)
+            {
+                return Strings["SetupHardwarePending"];
+            }
+
+            return Strings.Format(
+                "SetupLocalAiStorageSummaryFormat",
+                snapshot.OllamaModelCount,
+                FormatByteSize(snapshot.OllamaModelStorageBytes),
+                FormatByteSize(snapshot.SystemDriveFreeBytes));
+        }
+    }
+
     public bool IsUpdateBusy
     {
         get => _isUpdateBusy;
@@ -1050,6 +1318,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (SetField(ref _newSessionPrompt, value))
             {
+                HomeLaunchStatusText = string.Empty;
+                OnPropertyChanged(nameof(CanLaunchNewSession));
+                OnPropertyChanged(nameof(CanStartHomeSession));
+                OnPropertyChanged(nameof(HomeStartHelpText));
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
             }
         }
@@ -1064,6 +1336,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(CanLaunchNewSession));
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
+                NotifyNewSessionAccessSummaryChanged();
             }
         }
     }
@@ -1103,6 +1376,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
                 OnPropertyChanged(nameof(NewSessionSandboxHelpText));
+                OnPropertyChanged(nameof(NewSessionDangerousWarningVisibility));
+                NotifyNewSessionAccessSummaryChanged();
             }
         }
     }
@@ -1116,6 +1391,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
                 OnPropertyChanged(nameof(NewSessionApprovalHelpText));
+                OnPropertyChanged(nameof(NewSessionDangerousWarningVisibility));
+                NotifyNewSessionAccessSummaryChanged();
             }
         }
     }
@@ -1129,6 +1406,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
                 OnPropertyChanged(nameof(NewSessionLocalProviderHelpText));
+                OnPropertyChanged(nameof(NewSessionDataRouteText));
             }
         }
     }
@@ -1141,6 +1419,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _newSessionUseSearch, value))
             {
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
+                OnPropertyChanged(nameof(NewSessionDataRouteText));
             }
         }
     }
@@ -1153,6 +1432,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (SetField(ref _newSessionUseOss, value))
             {
                 OnPropertyChanged(nameof(NewSessionPreviewCommandText));
+                OnPropertyChanged(nameof(NewSessionDataRouteText));
             }
         }
     }
@@ -1189,6 +1469,91 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string NewSessionFlagsHelpText => Strings["NewSessionFlagsHelp"];
 
     public string NewSessionPreviewHelpText => Strings["NewSessionPreviewHelp"];
+
+    public Visibility NewSessionDangerousWarningVisibility =>
+        ShouldUseDangerousBypassForNewSession() ? Visibility.Visible : Visibility.Collapsed;
+
+    public string NewSessionAccessSummaryTitle =>
+        GetNewSessionAccessLevel() switch
+        {
+            NewSessionAccessLevel.Critical => Strings["NewSessionAccessCriticalTitle"],
+            NewSessionAccessLevel.Caution => Strings["NewSessionAccessCautionTitle"],
+            _ => Strings["NewSessionAccessSafeTitle"]
+        };
+
+    public string NewSessionAccessSummaryText
+    {
+        get
+        {
+            var folder = string.IsNullOrWhiteSpace(NewSessionWorkingDirectory)
+                ? Strings["NewSessionAccessFolderNotSelected"]
+                : NewSessionWorkingDirectory.Trim();
+
+            if (string.Equals(SelectedSandboxMode, "read-only", StringComparison.OrdinalIgnoreCase))
+            {
+                return Strings.Format("NewSessionAccessReadOnlyText", folder);
+            }
+
+            if (string.Equals(SelectedSandboxMode, "danger-full-access", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Equals(SelectedApprovalPolicy, "never", StringComparison.OrdinalIgnoreCase)
+                    ? Strings["NewSessionAccessFullNeverText"]
+                    : Strings["NewSessionAccessFullConfirmText"];
+            }
+
+            return string.Equals(SelectedApprovalPolicy, "never", StringComparison.OrdinalIgnoreCase)
+                ? Strings.Format("NewSessionAccessWorkspaceNeverText", folder)
+                : Strings.Format("NewSessionAccessWorkspaceConfirmText", folder);
+        }
+    }
+
+    public string NewSessionAccessSummaryBackground =>
+        GetNewSessionAccessLevel() switch
+        {
+            NewSessionAccessLevel.Critical => "#FDECEC",
+            NewSessionAccessLevel.Caution => "#FFF3E0",
+            _ => "#E7F6EE"
+        };
+
+    public string NewSessionAccessSummaryForeground =>
+        GetNewSessionAccessLevel() switch
+        {
+            NewSessionAccessLevel.Critical => "#B42318",
+            NewSessionAccessLevel.Caution => "#7A4208",
+            _ => "#1F6F4A"
+        };
+
+    public string NewSessionAccessSummaryBorder =>
+        GetNewSessionAccessLevel() switch
+        {
+            NewSessionAccessLevel.Critical => "#F04438",
+            NewSessionAccessLevel.Caution => "#EAAA08",
+            _ => "#32A66A"
+        };
+
+    public string NewSessionDataRouteText
+    {
+        get
+        {
+            if (NewSessionUseOss)
+            {
+                var provider = LocalProviderOptions
+                    .FirstOrDefault(option => option.Value == SelectedLocalProvider)
+                    ?.DisplayName;
+                provider = string.IsNullOrWhiteSpace(provider)
+                    ? Strings["NewSessionDataRouteLocalProvider"]
+                    : provider;
+
+                return NewSessionUseSearch
+                    ? Strings.Format("NewSessionDataRouteLocalWithWeb", provider)
+                    : Strings.Format("NewSessionDataRouteLocal", provider);
+            }
+
+            return NewSessionUseSearch
+                ? Strings["NewSessionDataRouteCloudWithWeb"]
+                : Strings["NewSessionDataRouteCloud"];
+        }
+    }
 
     public string NewSessionStatusText
     {
@@ -1264,12 +1629,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 PopulateExtensionEditor(value);
                 OnPropertyChanged(nameof(CanDeleteSelectedExtension));
+                OnPropertyChanged(nameof(CanOpenSelectedExtensionLocation));
                 OnPropertyChanged(nameof(CanInstallSelectedExtension));
                 OnPropertyChanged(nameof(CanEnableSelectedExtension));
                 OnPropertyChanged(nameof(CanDisableSelectedExtension));
                 OnPropertyChanged(nameof(CanRemoveSelectedExtension));
                 OnPropertyChanged(nameof(CanSaveSelectedExtension));
                 OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+                OnPropertyChanged(nameof(SelectedExtensionPrimaryActionText));
             }
         }
     }
@@ -1292,6 +1659,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         set => SetField(ref _selectedExtensionKind, value);
     }
 
+    public string SelectedExtensionTarget
+    {
+        get => _selectedExtensionTarget;
+        set
+        {
+            if (SetField(ref _selectedExtensionTarget, value))
+            {
+                RefreshExtensionViews(SelectedExtension?.Id);
+            }
+        }
+    }
+
+    public string ExtensionTargetApp
+    {
+        get => _extensionTargetApp;
+        set => SetField(ref _extensionTargetApp, string.IsNullOrWhiteSpace(value) ? "Codex" : value);
+    }
+
     public string ExtensionCommandOrUri
     {
         get => _extensionCommandOrUri;
@@ -1302,6 +1687,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         get => _extensionDescription;
         set => SetField(ref _extensionDescription, value);
+    }
+
+    public string ExtensionSearchText
+    {
+        get => _extensionSearchText;
+        set
+        {
+            if (SetField(ref _extensionSearchText, value))
+            {
+                RefreshExtensionViews(SelectedExtension?.Id);
+            }
+        }
     }
 
     public bool ExtensionIsEnabled
@@ -1322,19 +1719,103 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         private set => SetField(ref _extensionStatusForeground, value);
     }
 
-    public bool CanDeleteSelectedExtension => SelectedExtension?.IsCustom == true;
+    public bool CanDeleteSelectedExtension =>
+        SelectedExtension is not null &&
+        (SelectedExtension.IsCustom || TryGetExtensionFileSystemTarget(SelectedExtension, forDelete: true, out _, out _));
 
-    public bool CanInstallSelectedExtension => SelectedExtension is not null && !SelectedExtension.IsInstalled;
+    public bool CanOpenSelectedExtensionLocation =>
+        SelectedExtension is not null &&
+        TryGetExtensionFileSystemTarget(SelectedExtension, forDelete: false, out _, out _);
 
-    public bool CanEnableSelectedExtension => SelectedExtension is { IsInstalled: true, IsEnabled: false };
+    public bool CanInstallSelectedExtension =>
+        SelectedExtension is { CanProvision: true, IsBusy: false } item &&
+        (!item.IsInstalled || string.Equals(item.ManagementKind, "endpoint", StringComparison.OrdinalIgnoreCase));
 
-    public bool CanDisableSelectedExtension => SelectedExtension is { IsInstalled: true, IsEnabled: true };
+    public bool CanEnableSelectedExtension =>
+        SelectedExtension is { IsCustom: true, IsInstalled: true, IsEnabled: false, IsBusy: false };
 
-    public bool CanRemoveSelectedExtension => SelectedExtension is not null && (SelectedExtension.IsInstalled || SelectedExtension.IsCustom);
+    public bool CanDisableSelectedExtension =>
+        SelectedExtension is { IsCustom: true, IsInstalled: true, IsEnabled: true, IsBusy: false };
+
+    public bool CanRemoveSelectedExtension =>
+        SelectedExtension is { IsBusy: false } item &&
+        !item.IsDetected &&
+        ((item.CanUninstall && item.IsInstalled) || item.IsCustom);
+
+    public string SelectedExtensionPrimaryActionText =>
+        string.Equals(SelectedExtension?.ManagementKind, "endpoint", StringComparison.OrdinalIgnoreCase)
+            ? Strings["ExtensionsCheckConnectionButton"]
+            : Strings["ExtensionsInstallButton"];
 
     public bool CanSaveSelectedExtension => !string.IsNullOrWhiteSpace(ExtensionName);
 
     public string ExtensionsStoragePath => _extensionCatalogService.GetStoragePath();
+
+    public ObservableCollection<AiExtensionItem> DisplayedAiExtensions =>
+        _showCustomExtensionsTab
+            ? CustomAiExtensions
+            : _showInstalledExtensionsTab
+                ? InstalledAiExtensions
+                : SuggestedAiExtensions;
+
+    public string SuggestedExtensionsTabText =>
+        Strings.Format("ExtensionsSuggestedTab", SuggestedAiExtensions.Count);
+
+    public string InstalledExtensionsTabText =>
+        Strings.Format("ExtensionsInstalledTab", InstalledAiExtensions.Count);
+
+    public string CustomExtensionsTabText =>
+        Strings.Format("ExtensionsCustomTab", CustomAiExtensions.Count);
+
+    public string SuggestedExtensionsTabButtonBackground =>
+        _showInstalledExtensionsTab || _showCustomExtensionsTab ? "#E8D8C8" : "#16212B";
+
+    public string SuggestedExtensionsTabButtonForeground =>
+        _showInstalledExtensionsTab || _showCustomExtensionsTab ? "#16212B" : "#FFFDF9";
+
+    public string InstalledExtensionsTabButtonBackground =>
+        _showInstalledExtensionsTab ? "#16212B" : "#E8D8C8";
+
+    public string InstalledExtensionsTabButtonForeground =>
+        _showInstalledExtensionsTab ? "#FFFDF9" : "#16212B";
+
+    public string CustomExtensionsTabButtonBackground =>
+        _showCustomExtensionsTab ? "#16212B" : "#E8D8C8";
+
+    public string CustomExtensionsTabButtonForeground =>
+        _showCustomExtensionsTab ? "#FFFDF9" : "#16212B";
+
+    public string AllExtensionsTargetTabText => Strings["ExtensionsTargetAllTab"];
+
+    public string CodexExtensionsTargetTabText => Strings["ExtensionsTargetCodexTab"];
+
+    public string OpenCodeExtensionsTargetTabText => Strings["ExtensionsTargetOpenCodeTab"];
+
+    public string LmStudioExtensionsTargetTabText => Strings["ExtensionsTargetLmStudioTab"];
+
+    public string AllExtensionsTargetTabBackground =>
+        SelectedExtensionTarget == "All" ? "#16212B" : "#E8D8C8";
+
+    public string AllExtensionsTargetTabForeground =>
+        SelectedExtensionTarget == "All" ? "#FFFDF9" : "#16212B";
+
+    public string CodexExtensionsTargetTabBackground =>
+        SelectedExtensionTarget == "Codex" ? "#16212B" : "#E8D8C8";
+
+    public string CodexExtensionsTargetTabForeground =>
+        SelectedExtensionTarget == "Codex" ? "#FFFDF9" : "#16212B";
+
+    public string OpenCodeExtensionsTargetTabBackground =>
+        SelectedExtensionTarget == "OpenCode" ? "#16212B" : "#E8D8C8";
+
+    public string OpenCodeExtensionsTargetTabForeground =>
+        SelectedExtensionTarget == "OpenCode" ? "#FFFDF9" : "#16212B";
+
+    public string LmStudioExtensionsTargetTabBackground =>
+        SelectedExtensionTarget == "LmStudio" ? "#16212B" : "#E8D8C8";
+
+    public string LmStudioExtensionsTargetTabForeground =>
+        SelectedExtensionTarget == "LmStudio" ? "#FFFDF9" : "#16212B";
 
     public string SelectedExtensionDetailsText
     {
@@ -1345,16 +1826,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return Strings["ExtensionsNoSelection"];
             }
 
-            return string.Join(
-                Environment.NewLine,
-                [
-                    Strings.Format("ExtensionsDetailName", SelectedExtension.Name),
-                    Strings.Format("ExtensionsDetailType", SelectedExtension.KindLabel),
-                    Strings.Format("ExtensionsDetailSource", SelectedExtension.SourceDisplayLabel),
-                    Strings.Format("ExtensionsDetailStatus", SelectedExtension.InstallStateLabel),
-                    Strings.Format("ExtensionsDetailCommand", SelectedExtension.CommandOrUri),
-                    SelectedExtension.Description
-                ]);
+            var lines = new List<string>
+            {
+                Strings.Format("ExtensionsDetailName", SelectedExtension.Name),
+                Strings.Format("ExtensionsDetailType", SelectedExtension.KindLabel),
+                Strings.Format("ExtensionsDetailTarget", SelectedExtension.TargetAppDisplayLabel),
+                Strings.Format("ExtensionsDetailSource", SelectedExtension.SourceDisplayLabel),
+                Strings.Format("ExtensionsDetailStatus", SelectedExtension.InstallStateLabel)
+            };
+
+            if (!string.IsNullOrWhiteSpace(SelectedExtension.PackageVersion))
+            {
+                lines.Add(Strings.Format("ExtensionsDetailVersion", SelectedExtension.PackageVersion));
+            }
+
+            if (!string.IsNullOrWhiteSpace(SelectedExtension.RequestedAccess))
+            {
+                lines.Add(Strings.Format("ExtensionsDetailAccess", SelectedExtension.RequestedAccess));
+            }
+
+            lines.Add(Strings.Format("ExtensionsDetailCommand", SelectedExtension.CommandOrUri));
+
+            if (!string.IsNullOrWhiteSpace(SelectedExtension.VerificationDetail))
+            {
+                lines.Add(Strings.Format("ExtensionsDetailVerification", SelectedExtension.VerificationDetail));
+            }
+
+            lines.Add(SelectedExtension.Description);
+            return string.Join(Environment.NewLine, lines);
         }
     }
 
@@ -1388,10 +1887,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(CanOpenSelectedFile));
                 OnPropertyChanged(nameof(CanOpenSelectedSessionDirectory));
                 OnPropertyChanged(nameof(CanDeleteSelectedSession));
+                OnPropertyChanged(nameof(CanArchiveSelectedSession));
+                OnPropertyChanged(nameof(CanToggleSelectedSessionHidden));
                 OnPropertyChanged(nameof(CanResumeSelectedSession));
                 OnPropertyChanged(nameof(CanResumeSelectedSessionInOpenCode));
                 OnPropertyChanged(nameof(CanRefreshSelectedSessionOpenCodeBridge));
                 OnPropertyChanged(nameof(CanUseSelectedSessionDirectory));
+                OnPropertyChanged(nameof(CanCreateSelectedSessionCheckpoint));
                 OnPropertyChanged(nameof(CanEditSelectedSessionNote));
                 OnPropertyChanged(nameof(CanSaveSelectedSessionNote));
                 OnPropertyChanged(nameof(CanClearSelectedSessionNote));
@@ -1402,12 +1904,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 OnPropertyChanged(nameof(SelectedSessionPreviewText));
                 OnPropertyChanged(nameof(SelectedSessionTranscriptText));
                 OnPropertyChanged(nameof(SelectedSessionFavoriteText));
+                OnPropertyChanged(nameof(SelectedSessionHealthTitle));
+                OnPropertyChanged(nameof(SelectedSessionHealthText));
+                OnPropertyChanged(nameof(SelectedSessionHealthBackground));
+                OnPropertyChanged(nameof(SelectedSessionHealthForeground));
+                OnPropertyChanged(nameof(SelectedSessionHealthBorder));
+                OnPropertyChanged(nameof(ToggleSessionHiddenButtonText));
             }
         }
     }
 
     public string SelectedSessionTitleText =>
-        SelectedSession?.Title ?? Strings["NoSessionSelected"];
+        SelectedSession?.DisplayTitle ?? Strings["NoSessionSelected"];
 
     public string SelectedSessionPreviewText =>
         SelectedSession?.Preview ?? Strings["SelectSessionHint"];
@@ -1426,6 +1934,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public string SelectedSessionFavoriteText =>
         SelectedSession is null ? "-" : SelectedSession.IsFavorite ? Strings["Yes"] : Strings["No"];
+
+    public string SelectedSessionHealthTitle =>
+        GetSelectedSessionHealthLevel() switch
+        {
+            SessionHealthLevel.Overloaded => Strings["SessionHealthOverloadedTitle"],
+            SessionHealthLevel.Long => Strings["SessionHealthLongTitle"],
+            _ => Strings["SessionHealthStableTitle"]
+        };
+
+    public string SelectedSessionHealthText =>
+        GetSelectedSessionHealthLevel() switch
+        {
+            SessionHealthLevel.Overloaded => Strings["SessionHealthOverloadedText"],
+            SessionHealthLevel.Long => Strings["SessionHealthLongText"],
+            _ => Strings["SessionHealthStableText"]
+        };
+
+    public string SelectedSessionHealthBackground =>
+        GetSelectedSessionHealthLevel() switch
+        {
+            SessionHealthLevel.Overloaded => "#3B2022",
+            SessionHealthLevel.Long => "#3B3220",
+            _ => "#17392D"
+        };
+
+    public string SelectedSessionHealthForeground =>
+        GetSelectedSessionHealthLevel() switch
+        {
+            SessionHealthLevel.Overloaded => "#FFB4AB",
+            SessionHealthLevel.Long => "#FFE08A",
+            _ => "#A9EBC9"
+        };
+
+    public string SelectedSessionHealthBorder =>
+        GetSelectedSessionHealthLevel() switch
+        {
+            SessionHealthLevel.Overloaded => "#F97066",
+            SessionHealthLevel.Long => "#EAAA08",
+            _ => "#32A66A"
+        };
 
     public string StatusForeground
     {
@@ -1451,9 +1999,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         private set => SetField(ref _totalSessions, value);
     }
 
-    public int FavoriteSessions => _allSessions.Count(session => session.IsFavorite);
+    public int FavoriteSessions => _allSessions.Count(session => session.IsFavorite && !session.IsHidden);
 
-    public int RegularSessions => _allSessions.Count(session => !session.IsFavorite);
+    public int RegularSessions => _allSessions.Count(session => !session.IsFavorite && !session.IsHidden);
+
+    public int HiddenSessions => _allSessions.Count(session => session.IsHidden);
 
     public int TotalToolCalls
     {
@@ -1551,8 +2101,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         LogStartupPhase("Initial sessions refresh finished.");
         EnsureSessionsSurfaceInitialized();
 
-        if (SelectedAppSection == AppSection.Setup)
+        if (SelectedAppSection is AppSection.Home or AppSection.Setup)
         {
+            EnsureSectionDataInitialized(AppSection.Setup);
             await RefreshSetupSectionAsync(preserveDnsStatus: true, forceRefresh: true);
             LogStartupPhase("Initial setup refresh finished.");
         }
@@ -1596,6 +2147,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 _isExtensionsSectionInitialized = true;
                 OnPropertyChanged(nameof(ExtensionsSectionContent));
                 RefreshExtensionKindOptions();
+                RefreshExtensionTargetOptions();
                 LoadExtensionsSafe();
                 LogStartupPhase("Extensions section initialized.");
                 break;
@@ -1639,6 +2191,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void LoadSessionMetadata()
     {
         _favoriteSessionIds = _favoritesService.LoadFavorites();
+        _hiddenSessionIds = _sessionVisibilityService.LoadHiddenSessions();
         _sessionNotes = _notesService.LoadNotes();
     }
 
@@ -1900,6 +2453,101 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         watcher = null;
     }
 
+    private static void RouteMouseWheelToScrollableParent(object sender, MouseWheelEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source)
+        {
+            return;
+        }
+
+        var comboBox = FindVisualParent<ComboBox>(source);
+        if (comboBox?.IsDropDownOpen == true)
+        {
+            return;
+        }
+
+        var scrollViewer = FindWheelScrollViewer(source, e.Delta);
+        if (scrollViewer is null)
+        {
+            return;
+        }
+
+        ScrollByWheel(scrollViewer, e.Delta);
+        e.Handled = true;
+    }
+
+    private static ScrollViewer? FindWheelScrollViewer(DependencyObject source, int delta)
+    {
+        for (DependencyObject? current = source; current is not null; current = GetVisualOrLogicalParent(current))
+        {
+            if (current is ScrollViewer scrollViewer && CanScrollByWheel(scrollViewer, delta))
+            {
+                return scrollViewer;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool CanScrollByWheel(ScrollViewer scrollViewer, int delta)
+    {
+        if (scrollViewer.ScrollableHeight <= 0)
+        {
+            return false;
+        }
+
+        return delta < 0
+            ? scrollViewer.VerticalOffset < scrollViewer.ScrollableHeight
+            : scrollViewer.VerticalOffset > 0;
+    }
+
+    private static void ScrollByWheel(ScrollViewer scrollViewer, int delta)
+    {
+        var lines = SystemParameters.WheelScrollLines <= 0
+            ? 3
+            : Math.Min(SystemParameters.WheelScrollLines, 12);
+
+        for (var index = 0; index < lines; index++)
+        {
+            if (delta < 0)
+            {
+                scrollViewer.LineDown();
+            }
+            else
+            {
+                scrollViewer.LineUp();
+            }
+        }
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject source)
+        where T : DependencyObject
+    {
+        for (DependencyObject? current = source; current is not null; current = GetVisualOrLogicalParent(current))
+        {
+            if (current is T typed)
+            {
+                return typed;
+            }
+        }
+
+        return null;
+    }
+
+    private static DependencyObject? GetVisualOrLogicalParent(DependencyObject source)
+    {
+        if (source is Visual or Visual3D)
+        {
+            var visualParent = VisualTreeHelper.GetParent(source);
+            if (visualParent is not null)
+            {
+                return visualParent;
+            }
+        }
+
+        return LogicalTreeHelper.GetParent(source);
+    }
+
     private void OpenSelectedFileButton_Click(object sender, RoutedEventArgs e)
     {
         var selectedSession = SelectedSession;
@@ -1910,6 +2558,80 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         OpenExplorerSelect(selectedSession.FilePath);
+    }
+
+    private async void CreateSelectedSessionCheckpointButton_Click(object sender, RoutedEventArgs e)
+    {
+        var checkpointPath = await CreateSelectedSessionCheckpointAsync(showSuccessStatus: true);
+        if (!string.IsNullOrWhiteSpace(checkpointPath))
+        {
+            OpenExplorerSelect(checkpointPath);
+        }
+    }
+
+    private async void StartFreshSessionFromCheckpointButton_Click(object sender, RoutedEventArgs e)
+    {
+        var session = SelectedSession;
+        if (session is null)
+        {
+            return;
+        }
+
+        var checkpointPath = await CreateSelectedSessionCheckpointAsync(showSuccessStatus: false);
+        if (string.IsNullOrWhiteSpace(checkpointPath))
+        {
+            return;
+        }
+
+        EnsureSectionDataInitialized(AppSection.NewSession);
+        NewSessionPrompt = Strings.Format("SessionCheckpointContinuePrompt", checkpointPath);
+        if (Directory.Exists(session.WorkingDirectory))
+        {
+            NewSessionWorkingDirectory = AiHelperWorkspaceService.ResolveSafeWorkspace(
+                session.WorkingDirectory,
+                session.SessionId,
+                session.Title,
+                out _);
+        }
+
+        SelectedSandboxMode = "workspace-write";
+        SelectedApprovalPolicy = "on-request";
+        SelectedAppSection = AppSection.NewSession;
+        SetNewSessionStatus(
+            "#1F6F4A",
+            Strings.Format("SessionCheckpointReadyForFreshSession", checkpointPath));
+    }
+
+    private async Task<string?> CreateSelectedSessionCheckpointAsync(bool showSuccessStatus)
+    {
+        var session = SelectedSession;
+        if (session is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var language = Strings.CurrentLanguage;
+            var transcript = !string.IsNullOrWhiteSpace(session.TranscriptText)
+                ? session.TranscriptText
+                : await Task.Run(() => _sessionService.LoadTranscriptText(session, language));
+            var path = await Task.Run(
+                () => _checkpointService.CreateCheckpoint(session, transcript, language));
+
+            if (showSuccessStatus)
+            {
+                SetStatus("#A9EBC9", "SessionCheckpointCreated", path);
+            }
+
+            return path;
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to create a session checkpoint.", exception);
+            SetStatus("#FFD6D6", "SessionCheckpointFailed", exception.Message);
+            return null;
+        }
     }
 
     private void OpenSelectedSessionDirectoryButton_Click(object sender, RoutedEventArgs e)
@@ -1965,9 +2687,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _sessionService.DeleteSession(selectedSession);
             _favoriteSessionIds.Remove(selectedSession.SessionId);
+            _hiddenSessionIds.Remove(selectedSession.SessionId);
             _openCodeLinks.Remove(selectedSession.SessionId);
             _sessionNotes.Remove(selectedSession.SessionId);
             _favoritesService.SaveFavorites(_favoriteSessionIds);
+            _sessionVisibilityService.SaveHiddenSessions(_hiddenSessionIds);
             _openCodeLinkService.SaveLinks(_openCodeLinks);
             _notesService.SaveNotes(_sessionNotes);
             await RefreshSessionsAsync(isAutomaticRefresh: false, forceRefresh: true);
@@ -1976,6 +2700,82 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             SetStatus("#FFD6D6", "StatusDeleteFailed", exception.Message);
         }
+    }
+
+    private void ToggleSelectedSessionHiddenButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedSession = SelectedSession;
+
+        if (selectedSession is null)
+        {
+            return;
+        }
+
+        if (selectedSession.IsHidden)
+        {
+            _hiddenSessionIds.Remove(selectedSession.SessionId);
+            selectedSession.IsHidden = false;
+            SetStatus("#F8E7D6", "StatusSessionShown", selectedSession.Title);
+        }
+        else
+        {
+            _hiddenSessionIds.Add(selectedSession.SessionId);
+            selectedSession.IsHidden = true;
+            SetStatus("#F8E7D6", "StatusSessionHidden", selectedSession.Title);
+        }
+
+        _sessionVisibilityService.SaveHiddenSessions(_hiddenSessionIds);
+        RefreshSessionCountBindings();
+        OnPropertyChanged(nameof(ToggleSessionHiddenButtonText));
+        ExportSessionsFeedSafe();
+        ApplyFilter(selectedSession.SessionId);
+    }
+
+    private async void ArchiveSelectedSessionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedSession = SelectedSession;
+
+        if (selectedSession is null || !File.Exists(selectedSession.FilePath))
+        {
+            return;
+        }
+
+        var result = MessageBox.Show(
+            Strings.Format("ArchiveSessionDialogMessage", selectedSession.Title, selectedSession.SessionId),
+            Strings["ArchiveSessionDialogTitle"],
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            var archivePath = _sessionService.ArchiveSession(selectedSession);
+            _favoriteSessionIds.Remove(selectedSession.SessionId);
+            _hiddenSessionIds.Remove(selectedSession.SessionId);
+            _openCodeLinks.Remove(selectedSession.SessionId);
+            _sessionNotes.Remove(selectedSession.SessionId);
+            _favoritesService.SaveFavorites(_favoriteSessionIds);
+            _sessionVisibilityService.SaveHiddenSessions(_hiddenSessionIds);
+            _openCodeLinkService.SaveLinks(_openCodeLinks);
+            _notesService.SaveNotes(_sessionNotes);
+            SetStatus("#F8E7D6", "StatusSessionArchived", archivePath);
+            await RefreshSessionsAsync(isAutomaticRefresh: false, forceRefresh: true);
+        }
+        catch (Exception exception)
+        {
+            SetStatus("#FFD6D6", "StatusSessionArchiveFailed", exception.Message);
+        }
+    }
+
+    private void OpenSessionArchiveButton_Click(object sender, RoutedEventArgs e)
+    {
+        var archivePath = _sessionService.GetSessionArchiveRootPath();
+        Directory.CreateDirectory(archivePath);
+        CodexEnvironmentService.OpenFolder(archivePath);
     }
 
     private void OpenSessionsFolderButton_Click(object sender, RoutedEventArgs e)
@@ -1995,6 +2795,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (selectedSession is null)
         {
+            return;
+        }
+
+        if (selectedSession.IsClaudeSession)
+        {
+            if (!File.Exists(_environmentService.ClaudeCommandPath))
+            {
+                SetStatus("#FFD6D6", "StatusClaudeCmdMissing", _environmentService.ClaudeCommandPath);
+                return;
+            }
+
+            MarkSessionsRefreshPending();
+            _environmentService.LaunchClaudeResumeSession(
+                selectedSession.SessionId,
+                selectedSession.WorkingDirectory);
+            SetStatus("#F8E7D6", "StatusResumeStarted");
             return;
         }
 
@@ -2025,6 +2841,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (selectedSession is null)
         {
+            return;
+        }
+
+        if (!selectedSession.IsCodexSession)
+        {
+            SetStatus("#FFD6D6", "StatusResumeOnlyCodex");
             return;
         }
 
@@ -2233,11 +3055,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _favoritesService.SaveFavorites(_favoriteSessionIds);
         OnPropertyChanged(nameof(FavoriteButtonText));
-        OnPropertyChanged(nameof(FavoriteSessions));
-        OnPropertyChanged(nameof(RegularSessions));
-        OnPropertyChanged(nameof(SessionsTabText));
-        OnPropertyChanged(nameof(FavoritesTabText));
+        RefreshSessionCountBindings();
         OnPropertyChanged(nameof(SelectedSessionFavoriteText));
+        ExportSessionsFeedSafe();
         ApplyFilter(selectedSession.SessionId);
     }
 
@@ -2261,9 +3081,210 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SelectedAppSection = AppSection.NewSession;
     }
 
+    private void HomeSectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedAppSection = AppSection.Home;
+    }
+
+    private void HomeExampleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string prompt })
+        {
+            NewSessionPrompt = prompt;
+        }
+    }
+
+    private void HomeStartSafeSessionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(NewSessionPrompt))
+        {
+            SetHomeLaunchStatus(
+                "#FDECEC",
+                "#B42318",
+                Strings["HomeLaunchPromptRequired"]);
+            HomePromptTextBox.Focus();
+            return;
+        }
+
+        if (!IsHomeEnvironmentReady)
+        {
+            SetHomeLaunchStatus(
+                "#FFF3E0",
+                "#7A4208",
+                Strings["HomeLaunchSetupRequired"]);
+            return;
+        }
+
+        EnsureSectionDataInitialized(AppSection.NewSession);
+        NewSessionModel = string.Empty;
+        NewSessionProfile = string.Empty;
+        NewSessionUseOss = false;
+        SelectedSandboxMode = "workspace-write";
+        SelectedApprovalPolicy = "on-request";
+
+        try
+        {
+            MarkSessionsRefreshPending();
+            var workspace = _environmentService.LaunchInteractiveSession(
+                BuildNewSessionLaunchOptions(workingDirectoryOverride: string.Empty));
+            SetHomeLaunchStatus(
+                "#E7F6EE",
+                "#1F6F4A",
+                Strings.Format("HomeLaunchStarted", workspace));
+        }
+        catch (Exception exception)
+        {
+            SetHomeLaunchStatus(
+                "#FDECEC",
+                "#B42318",
+                Strings.Format("HomeLaunchFailed", exception.Message));
+        }
+    }
+
+    private void HomeOpenAdvancedLaunchButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedAppSection = AppSection.NewSession;
+    }
+
+    private void HomeOpenSetupButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedAppSection = AppSection.Setup;
+        FocusSetupCoreSection();
+    }
+
+    private void HomeRecentSessionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: SessionRecord session })
+        {
+            return;
+        }
+
+        SelectedSession = session;
+        SelectedAppSection = AppSection.Sessions;
+    }
+
+    private void StartBeginnerOnboardingButton_Click(object sender, RoutedEventArgs e)
+    {
+        _beginnerOnboardingInProgress = true;
+        _showBeginnerOnboarding = false;
+        OnPropertyChanged(nameof(BeginnerOnboardingVisibility));
+        OnPropertyChanged(nameof(HomeWorkspaceVisibility));
+        SelectedAppSection = AppSection.Setup;
+        FocusSetupCoreSection();
+
+        if (IsHomeEnvironmentReady)
+        {
+            CompleteBeginnerOnboarding();
+        }
+    }
+
+    private void SkipBeginnerOnboardingButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(
+                Strings["OnboardingSkipConfirmText"],
+                Strings["OnboardingSkipConfirmTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        CompleteBeginnerOnboarding();
+    }
+
+    private void ReplayBeginnerOnboardingButton_Click(object sender, RoutedEventArgs e)
+    {
+        _beginnerOnboardingInProgress = false;
+        _hasCompletedBeginnerOnboarding = false;
+        _showBeginnerOnboarding = true;
+        _settingsService.SaveHasCompletedBeginnerOnboarding(false);
+        OnPropertyChanged(nameof(BeginnerOnboardingVisibility));
+        OnPropertyChanged(nameof(HomeWorkspaceVisibility));
+        SelectedAppSection = AppSection.Home;
+    }
+
+    private void CompleteBeginnerOnboarding()
+    {
+        _beginnerOnboardingInProgress = false;
+        _hasCompletedBeginnerOnboarding = true;
+        _showBeginnerOnboarding = false;
+        _settingsService.SaveHasCompletedBeginnerOnboarding(true);
+        OnPropertyChanged(nameof(BeginnerOnboardingVisibility));
+        OnPropertyChanged(nameof(HomeWorkspaceVisibility));
+    }
+
     private void ExtensionsSectionButton_Click(object sender, RoutedEventArgs e)
     {
         SelectedAppSection = AppSection.Extensions;
+    }
+
+    private void SuggestedExtensionsTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_showInstalledExtensionsTab && !_showCustomExtensionsTab)
+        {
+            return;
+        }
+
+        _showInstalledExtensionsTab = false;
+        _showCustomExtensionsTab = false;
+        RefreshExtensionTabBindings();
+        SelectVisibleExtension(SelectedExtension?.Id);
+    }
+
+    private void InstalledExtensionsTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_showInstalledExtensionsTab)
+        {
+            return;
+        }
+
+        _showInstalledExtensionsTab = true;
+        _showCustomExtensionsTab = false;
+        RefreshExtensionTabBindings();
+        SelectVisibleExtension(SelectedExtension?.Id);
+    }
+
+    private void CustomExtensionsTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_showCustomExtensionsTab)
+        {
+            return;
+        }
+
+        _showInstalledExtensionsTab = false;
+        _showCustomExtensionsTab = true;
+        RefreshExtensionTabBindings();
+        SelectVisibleExtension(SelectedExtension?.Id);
+    }
+
+    private void AllExtensionsTargetTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedExtensionTarget = "All";
+    }
+
+    private void CodexExtensionsTargetTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedExtensionTarget = "Codex";
+    }
+
+    private void OpenCodeExtensionsTargetTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedExtensionTarget = "OpenCode";
+    }
+
+    private void LmStudioExtensionsTargetTabButton_Click(object sender, RoutedEventArgs e)
+    {
+        SelectedExtensionTarget = "LmStudio";
+    }
+
+    private void NewCustomPluginButton_Click(object sender, RoutedEventArgs e)
+    {
+        PrepareNewCustomExtension(AiExtensionKind.Plugin);
+    }
+
+    private void NewCustomMcpButton_Click(object sender, RoutedEventArgs e)
+    {
+        PrepareNewCustomExtension(AiExtensionKind.Mcp);
     }
 
     private void SetupSectionButton_Click(object sender, RoutedEventArgs e)
@@ -2362,6 +3383,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void LaunchNewSessionButton_Click(object sender, RoutedEventArgs e)
     {
+        if (string.IsNullOrWhiteSpace(NewSessionPrompt))
+        {
+            SetNewSessionStatus("#FFD6D6", Strings["HomeLaunchPromptRequired"]);
+            return;
+        }
+
         var workingDirectory = GetNormalizedNewSessionWorkingDirectory();
 
         if (!Directory.Exists(workingDirectory))
@@ -2373,6 +3400,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (!File.Exists(_environmentService.CodexCommandPath))
         {
             SetNewSessionStatus("#FFD6D6", Strings.Format("StatusCodexCmdMissing", _environmentService.CodexCommandPath));
+            return;
+        }
+
+        if (!ConfirmDangerousNewSessionLaunch())
+        {
             return;
         }
 
@@ -2390,6 +3422,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void LaunchNewSessionWithImageButton_Click(object sender, RoutedEventArgs e)
     {
+        if (string.IsNullOrWhiteSpace(NewSessionPrompt))
+        {
+            SetNewSessionStatus("#FFD6D6", Strings["HomeLaunchPromptRequired"]);
+            return;
+        }
+
         var workingDirectory = GetNormalizedNewSessionWorkingDirectory();
 
         if (!Directory.Exists(workingDirectory))
@@ -2409,6 +3447,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (string.IsNullOrWhiteSpace(imagePath))
         {
             SetNewSessionStatus("#F8E7D6", Strings["StatusImageSelectionCanceled"]);
+            return;
+        }
+
+        if (!ConfirmDangerousNewSessionLaunch())
+        {
             return;
         }
 
@@ -2508,7 +3551,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             IsUpdateBusy = true;
             SetUpdateStatus("#F8E7D6", "UpdateStatusDownloading");
-            await _updateService.DownloadInstallerAsync(snapshot.InstallerDownloadUrl, installerPath);
+            await _updateService.DownloadInstallerAsync(
+                snapshot.InstallerDownloadUrl,
+                snapshot.InstallerChecksumUrl,
+                installerPath);
             SetUpdateStatus("#F8E7D6", "UpdateStatusDownloaded", installerPath);
 
             var executablePath = Environment.ProcessPath ??
@@ -3091,10 +4137,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        var option = LocalAiModelOptions.FirstOrDefault(model => model.IsRecommended) ??
+                     LocalAiModelOptions.FirstOrDefault();
+
+        if (option is null)
+        {
+            SetSetupStatus("#FFD6D6", Strings["SetupHardwarePending"]);
+            return;
+        }
+
+        if (!option.CanInstall)
+        {
+            SetSetupStatus("#FFD6D6", Strings["SetupStatusModelDoesNotFit"]);
+            return;
+        }
+
         try
         {
-            _environmentService.LaunchOllamaModelInstallTerminal("phi4-mini");
-            BeginSetupAction(Strings["SetupStatusStarterModelInstallStarted"], FocusSetupLocalAiSection);
+            _environmentService.LaunchOllamaModelInstallTerminal(option.ModelTag);
+            BeginSetupAction(
+                Strings.Format("SetupStatusModelInstallStarted", option.Name),
+                FocusSetupLocalAiSection);
         }
         catch (Exception exception)
         {
@@ -3165,6 +4228,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (!_environmentService.IsOllamaInstalled())
         {
             SetSetupStatus("#FFD6D6", Strings["SetupStatusOllamaMissing"]);
+            return;
+        }
+
+        if (!option.CanInstall)
+        {
+            SetSetupStatus("#FFD6D6", Strings["SetupStatusModelDoesNotFit"]);
             return;
         }
 
@@ -3564,6 +4633,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ? _allSessions.Where(session => session.IsFavorite)
             : _allSessions.Where(session => !session.IsFavorite);
 
+        if (!ShowHiddenSessions)
+        {
+            query = query.Where(session => !session.IsHidden);
+        }
+
         if (!string.IsNullOrWhiteSpace(filter))
         {
             query = query.Where(session => session.SearchBlob.Contains(filter, StringComparison.OrdinalIgnoreCase));
@@ -3622,6 +4696,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         foreach (var session in _allSessions)
         {
             session.IsFavorite = _favoriteSessionIds.Contains(session.SessionId);
+            session.IsHidden = _hiddenSessionIds.Contains(session.SessionId);
             session.Note = _sessionNotes.TryGetValue(session.SessionId, out var note) ? note : string.Empty;
             UpdateSessionSearchBlob(session);
         }
@@ -3631,13 +4706,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             session => session.UpdatedAtUtc.ToLocalTime().Date == DateTime.Today);
         TotalMessages = _allSessions.Sum(session => session.TotalMessageCount);
         TotalToolCalls = _allSessions.Sum(session => session.ToolCallCount);
-        OnPropertyChanged(nameof(FavoriteSessions));
-        OnPropertyChanged(nameof(RegularSessions));
-        OnPropertyChanged(nameof(SessionsTabText));
-        OnPropertyChanged(nameof(FavoritesTabText));
+        RefreshSessionCountBindings();
+        RefreshHomeRecentSessions();
         OnPropertyChanged(nameof(SelectedSessionFavoriteText));
+        ExportSessionsFeedSafe();
         ApplyFilter();
         RefreshOpenCodeBindings();
+    }
+
+    private void RefreshHomeRecentSessions()
+    {
+        HomeRecentSessions.Clear();
+
+        foreach (var session in _allSessions
+                     .Where(session => !session.IsHidden)
+                     .OrderByDescending(session => session.UpdatedAtUtc)
+                     .Take(3))
+        {
+            HomeRecentSessions.Add(session);
+        }
+
+        OnPropertyChanged(nameof(HasHomeRecentSessions));
+        OnPropertyChanged(nameof(HomeRecentSessionsVisibility));
+        OnPropertyChanged(nameof(HomeRecentSessionsEmptyVisibility));
+    }
+
+    private void ExportSessionsFeedSafe()
+    {
+        try
+        {
+            _sessionFeedExportService.SaveSessions(_allSessions);
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to export AIHelper session feed.", exception);
+        }
+    }
+
+    private void RefreshSessionCountBindings()
+    {
+        OnPropertyChanged(nameof(FavoriteSessions));
+        OnPropertyChanged(nameof(RegularSessions));
+        OnPropertyChanged(nameof(HiddenSessions));
+        OnPropertyChanged(nameof(SessionsTabText));
+        OnPropertyChanged(nameof(FavoritesTabText));
+        OnPropertyChanged(nameof(HiddenSessionsToggleText));
     }
 
     private void ApplyLanguageChange(AppLanguage language)
@@ -3654,11 +4767,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(FavoriteButtonText));
         OnPropertyChanged(nameof(SessionsTabText));
         OnPropertyChanged(nameof(FavoritesTabText));
+        OnPropertyChanged(nameof(HiddenSessionsToggleText));
         OnPropertyChanged(nameof(EmptySessionsText));
         OnPropertyChanged(nameof(SelectedSessionTitleText));
         OnPropertyChanged(nameof(SelectedSessionPreviewText));
         OnPropertyChanged(nameof(SelectedSessionTranscriptText));
         OnPropertyChanged(nameof(SelectedSessionFavoriteText));
+        OnPropertyChanged(nameof(SelectedSessionHealthTitle));
+        OnPropertyChanged(nameof(SelectedSessionHealthText));
+        OnPropertyChanged(nameof(ToggleSessionHiddenButtonText));
+        OnPropertyChanged(nameof(CanArchiveSelectedSession));
+        OnPropertyChanged(nameof(CanToggleSelectedSessionHidden));
         OnPropertyChanged(nameof(CanOpenSelectedSessionDirectory));
         OnPropertyChanged(nameof(NewSessionPreviewCommandText));
         OnPropertyChanged(nameof(NewSessionPromptHelpText));
@@ -3670,6 +4789,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(NewSessionLocalProviderHelpText));
         OnPropertyChanged(nameof(NewSessionFlagsHelpText));
         OnPropertyChanged(nameof(NewSessionPreviewHelpText));
+        NotifyNewSessionAccessSummaryChanged();
+        OnPropertyChanged(nameof(NewSessionDataRouteText));
         OnPropertyChanged(nameof(SelectedDnsAdapterDescriptionText));
         OnPropertyChanged(nameof(SelectedDnsAdapterServersText));
         OnPropertyChanged(nameof(SelectedDnsPresetDescriptionText));
@@ -3709,6 +4830,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedSessionOpenCodeBridgeText));
         OnPropertyChanged(nameof(SelectedExtensionDetailsText));
         OnPropertyChanged(nameof(CanDeleteSelectedExtension));
+        OnPropertyChanged(nameof(CanOpenSelectedExtensionLocation));
         OnPropertyChanged(nameof(CanInstallSelectedExtension));
         OnPropertyChanged(nameof(CanEnableSelectedExtension));
         OnPropertyChanged(nameof(CanDisableSelectedExtension));
@@ -3717,6 +4839,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         RefreshLaunchOptionCollections();
         RefreshExtensionKindOptions();
+        RefreshExtensionTargetOptions();
         if (_isExtensionsSectionInitialized)
         {
             LoadExtensionsSafe();
@@ -3762,6 +4885,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ? Strings["NoRefreshYet"]
             : Strings.Format("LastUpdated", _lastUpdatedAtLocal.Value.ToString("dd.MM.yyyy HH:mm:ss"));
         RefreshSetupOverviewBindings();
+        OnPropertyChanged(nameof(HomeReadinessText));
+        OnPropertyChanged(nameof(HomeStartHelpText));
+        OnPropertyChanged(nameof(SetupSubtitleText));
         OnPropertyChanged(nameof(SettingsPhotoPasteFixStateText));
         RefreshOpenCodeBindings();
     }
@@ -3771,7 +4897,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         NewSessionStatusText = Strings["NewSessionStatusReady"];
         NewSessionStatusForeground = "#F8E7D6";
         SetupStatusText = Strings["SetupStatusReady"];
-        SetupStatusForeground = "#F8E7D6";
+        SetupStatusForeground = "#1F6F4A";
         _settingsStatusKey = "SettingsStatusReady";
         _settingsStatusArgs = [];
         SettingsStatusText = Strings["SettingsStatusReady"];
@@ -3801,9 +4927,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 },
                 new LaunchOption
                 {
+                    Value = "Skill",
+                    DisplayName = Strings["ExtensionsKindSkill"],
+                    Description = Strings["ExtensionsKindSkillDescription"]
+                },
+                new LaunchOption
+                {
                     Value = "MCP",
                     DisplayName = Strings["ExtensionsKindMcp"],
                     Description = Strings["ExtensionsKindMcpDescription"]
+                }
+            ]);
+    }
+
+    private void RefreshExtensionTargetOptions()
+    {
+        ReplaceLaunchOptions(
+            ExtensionTargetOptions,
+            [
+                new LaunchOption
+                {
+                    Value = "Codex",
+                    DisplayName = Strings["ExtensionsTargetCodexTab"],
+                    Description = Strings["ExtensionsTargetCodexDescription"]
+                },
+                new LaunchOption
+                {
+                    Value = "OpenCode",
+                    DisplayName = Strings["ExtensionsTargetOpenCodeTab"],
+                    Description = Strings["ExtensionsTargetOpenCodeDescription"]
+                },
+                new LaunchOption
+                {
+                    Value = "LmStudio",
+                    DisplayName = Strings["ExtensionsTargetLmStudioTab"],
+                    Description = Strings["ExtensionsTargetLmStudioDescription"]
                 }
             ]);
     }
@@ -3822,9 +4980,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 AiExtensions.Add(item);
             }
 
-            SelectedExtension = AiExtensions.FirstOrDefault(item => string.Equals(item.Id, selectedId, StringComparison.OrdinalIgnoreCase)) ??
-                                AiExtensions.FirstOrDefault();
-            SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusLoaded"]);
+            RemoveObsoleteDetectedToolEntries();
+            var detected = MergeFastDetectedExtensions();
+            detected |= RemoveMissingDetectedExtensions();
+            RefreshExtensionViews(selectedId);
+            if (detected)
+            {
+                SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusDetectedLoaded"]);
+            }
+
+            _ = RefreshDetectedExtensionsAsync();
+            _ = RefreshManagedExtensionsAsync();
+
+            if (!detected)
+            {
+                SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusLoaded"]);
+            }
         }
         catch (Exception exception)
         {
@@ -3839,6 +5010,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             ExtensionName = string.Empty;
             SelectedExtensionKind = "Plugin";
+            ExtensionTargetApp = NormalizeExtensionTargetAppValue(SelectedExtensionTarget == "All" ? "Codex" : SelectedExtensionTarget);
             ExtensionCommandOrUri = string.Empty;
             ExtensionDescription = string.Empty;
             ExtensionIsEnabled = true;
@@ -3846,13 +5018,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         ExtensionName = item.Name;
-        SelectedExtensionKind = item.Kind == AiExtensionKind.Mcp ? "MCP" : "Plugin";
+        SelectedExtensionKind = FormatExtensionKindValue(item.Kind);
+        ExtensionTargetApp = NormalizeExtensionTargetAppValue(item.TargetApp);
         ExtensionCommandOrUri = item.CommandOrUri;
         ExtensionDescription = item.Description;
         ExtensionIsEnabled = item.IsEnabled;
     }
 
-    private void InstallSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    private async void InstallSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
     {
         var selected = SelectedExtension;
 
@@ -3862,12 +5035,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        selected.IsInstalled = true;
-        selected.IsEnabled = true;
-        ExtensionIsEnabled = true;
+        if (!selected.CanProvision)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusNoTrustedInstaller"]);
+            return;
+        }
+
+        if (!string.Equals(selected.ManagementKind, "endpoint", StringComparison.OrdinalIgnoreCase))
+        {
+            var confirmation = MessageBox.Show(
+                Strings.Format(
+                    "ExtensionsInstallConfirmationMessage",
+                    selected.Name,
+                    string.IsNullOrWhiteSpace(selected.PackageVersion) ? "—" : selected.PackageVersion,
+                    string.IsNullOrWhiteSpace(selected.RequestedAccess)
+                        ? Strings["ExtensionsAccessUnknown"]
+                        : selected.RequestedAccess,
+                    selected.CommandOrUri),
+                Strings["ExtensionsInstallConfirmationTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                return;
+            }
+        }
+
+        selected.IsBusy = true;
+        RefreshExtensionGridBindings(selected.Id);
+        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusInstalling", selected.Name));
+        var result = await _extensionManagementService.InstallAsync(selected);
+        LocalizeExtensionItem(selected);
         SaveExtensionsSafe();
-        RefreshExtensionGridBindings();
-        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusInstalled", selected.Name));
+        RefreshExtensionGridBindings(selected.Id);
+
+        SetExtensionStatus(
+            result.Success ? "#B7F7D1" : "#FFD6D6",
+            result.Success
+                ? Strings.Format("ExtensionsStatusInstalledVerified", selected.Name)
+                : Strings.Format("ExtensionsStatusOperationFailed", selected.Name, result.Detail));
     }
 
     private void EnableSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
@@ -3884,7 +5091,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         selected.IsEnabled = true;
         ExtensionIsEnabled = true;
         SaveExtensionsSafe();
-        RefreshExtensionGridBindings();
+        RefreshExtensionGridBindings(selected.Id);
         SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusEnabled", selected.Name));
     }
 
@@ -3901,11 +5108,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         selected.IsEnabled = false;
         ExtensionIsEnabled = false;
         SaveExtensionsSafe();
-        RefreshExtensionGridBindings();
+        RefreshExtensionGridBindings(selected.Id);
         SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusDisabled", selected.Name));
     }
 
-    private void RemoveSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
+    private async void RemoveSelectedExtensionButton_Click(object sender, RoutedEventArgs e)
     {
         var selected = SelectedExtension;
 
@@ -3932,12 +5139,83 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        selected.IsInstalled = false;
-        selected.IsEnabled = false;
-        ExtensionIsEnabled = false;
+        if (!selected.CanUninstall)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusNoTrustedRemoval"]);
+            return;
+        }
+
+        selected.IsBusy = true;
+        RefreshExtensionGridBindings(selected.Id);
+        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusRemoving", selected.Name));
+        var operation = await _extensionManagementService.RemoveAsync(selected);
+        LocalizeExtensionItem(selected);
         SaveExtensionsSafe();
-        RefreshExtensionGridBindings();
-        SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusRemoved", selected.Name));
+        RefreshExtensionGridBindings(selected.Id);
+
+        SetExtensionStatus(
+            operation.Success ? "#B7F7D1" : "#FFD6D6",
+            operation.Success
+                ? Strings.Format("ExtensionsStatusRemovedVerified", selected.Name)
+                : Strings.Format("ExtensionsStatusOperationFailed", selected.Name, operation.Detail));
+    }
+
+    private void OpenSelectedExtensionLocationButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = SelectedExtension;
+
+        if (selected is null ||
+            !TryGetExtensionFileSystemTarget(selected, forDelete: false, out var targetPath, out var isDirectory))
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsLocationNotFound"]);
+            return;
+        }
+
+        if (isDirectory)
+        {
+            CodexEnvironmentService.OpenFolder(targetPath);
+        }
+        else
+        {
+            OpenExplorerSelect(targetPath);
+        }
+    }
+
+    private void ExtensionActiveToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.CheckBox { DataContext: AiExtensionItem item } checkBox)
+        {
+            return;
+        }
+
+        SelectedExtension = item;
+
+        if (!item.IsCustom)
+        {
+            checkBox.IsChecked = item.IsActive;
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusManagedToggleBlocked"]);
+            return;
+        }
+
+        var isEnabled = checkBox.IsChecked == true;
+
+        item.IsEnabled = isEnabled;
+        if (isEnabled)
+        {
+            item.IsInstalled = true;
+        }
+
+        ExtensionIsEnabled = isEnabled;
+        LocalizeExtensionItem(item);
+        SaveExtensionsSafe();
+        RefreshExtensionGridBindings(item.Id);
+        OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+
+        SetExtensionStatus(
+            "#F8E7D6",
+            Strings.Format(
+                isEnabled ? "ExtensionsStatusEnabled" : "ExtensionsStatusDisabled",
+                item.Name));
     }
 
     private void AddExtensionButton_Click(object sender, RoutedEventArgs e)
@@ -3954,7 +5232,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         LocalizeExtensionItem(item);
         AiExtensions.Add(item);
         SaveExtensionsSafe();
-        SelectedExtension = item;
+        _showInstalledExtensionsTab = false;
+        _showCustomExtensionsTab = true;
+        RefreshExtensionGridBindings(item.Id);
         SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusAdded"]);
     }
 
@@ -3974,20 +5254,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             LocalizeExtensionItem(item);
             AiExtensions.Add(item);
             SaveExtensionsSafe();
-            SelectedExtension = item;
+            _showInstalledExtensionsTab = false;
+            _showCustomExtensionsTab = true;
+            RefreshExtensionGridBindings(item.Id);
             SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusPresetCopied"]);
             return;
         }
 
         SelectedExtension.Name = ExtensionName.Trim();
         SelectedExtension.Kind = ParseExtensionKind(SelectedExtensionKind);
+        SelectedExtension.TargetApp = NormalizeExtensionTargetAppValue(ExtensionTargetApp);
         SelectedExtension.CommandOrUri = ExtensionCommandOrUri.Trim();
         SelectedExtension.Description = ExtensionDescription.Trim();
         SelectedExtension.IsEnabled = ExtensionIsEnabled;
         SelectedExtension.IsInstalled = SelectedExtension.IsInstalled || ExtensionIsEnabled;
         LocalizeExtensionItem(SelectedExtension);
         SaveExtensionsSafe();
-        RefreshExtensionGridBindings();
+        RefreshExtensionGridBindings(SelectedExtension.Id);
         OnPropertyChanged(nameof(SelectedExtensionDetailsText));
         SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusSaved"]);
     }
@@ -4010,7 +5293,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         LocalizeExtensionItem(copy);
         AiExtensions.Add(copy);
         SaveExtensionsSafe();
-        SelectedExtension = copy;
+        _showInstalledExtensionsTab = false;
+        _showCustomExtensionsTab = true;
+        RefreshExtensionGridBindings(copy.Id);
         SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusPresetCopied"]);
     }
 
@@ -4018,7 +5303,49 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var selected = SelectedExtension;
 
-        if (selected?.IsCustom != true)
+        if (selected is null)
+        {
+            SetExtensionStatus("#FFD6D6", Strings["ExtensionsNoSelection"]);
+            return;
+        }
+
+        if (selected.IsDetected)
+        {
+            if (!TryGetExtensionFileSystemTarget(selected, forDelete: true, out var targetPath, out var isDirectory))
+            {
+                SetExtensionStatus("#FFD6D6", Strings["ExtensionsLocationNotFound"]);
+                return;
+            }
+
+            var detectedResult = MessageBox.Show(
+                Strings.Format("ExtensionsDeleteDetectedWarningMessage", selected.Name, targetPath),
+                Strings["ExtensionsDeleteWarningTitle"],
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (detectedResult != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            try
+            {
+                var trashPath = MoveExtensionTargetToTrash(selected, targetPath, isDirectory);
+                AiExtensions.Remove(selected);
+                SaveExtensionsSafe();
+                RefreshExtensionGridBindings();
+                SetExtensionStatus("#F8E7D6", Strings.Format("ExtensionsStatusMovedToTrash", trashPath));
+            }
+            catch (Exception exception)
+            {
+                _logService.Error(nameof(MainWindow), "Failed to move detected extension to trash.", exception);
+                SetExtensionStatus("#FFD6D6", Strings.Format("ExtensionsStatusDeleteFailed", exception.Message));
+            }
+
+            return;
+        }
+
+        if (!selected.IsCustom)
         {
             SetExtensionStatus("#FFD6D6", Strings["ExtensionsStatusPresetDeleteBlocked"]);
             return;
@@ -4037,8 +5364,165 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         AiExtensions.Remove(selected);
         SaveExtensionsSafe();
-        SelectedExtension = AiExtensions.FirstOrDefault();
+        RefreshExtensionGridBindings();
         SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusDeleted"]);
+    }
+
+    private static bool TryGetExtensionFileSystemTarget(
+        AiExtensionItem item,
+        bool forDelete,
+        out string targetPath,
+        out bool isDirectory)
+    {
+        targetPath = string.Empty;
+        isDirectory = false;
+
+        var detectionPath = item.DetectionPath?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(detectionPath) && !forDelete)
+        {
+            if (Directory.Exists(detectionPath))
+            {
+                targetPath = detectionPath;
+                isDirectory = true;
+                return true;
+            }
+
+            if (File.Exists(detectionPath))
+            {
+                targetPath = detectionPath;
+                isDirectory = false;
+                return true;
+            }
+        }
+
+        if (forDelete &&
+            item.IsDetected &&
+            !string.IsNullOrWhiteSpace(detectionPath) &&
+            !string.Equals(detectionPath, item.CommandOrUri?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var path = item.CommandOrUri?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        if (Directory.Exists(path))
+        {
+            targetPath = path;
+            isDirectory = true;
+            return true;
+        }
+
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        if (forDelete &&
+            string.Equals(Path.GetFileName(path), "SKILL.md", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(Path.GetDirectoryName(path)))
+        {
+            targetPath = Path.GetDirectoryName(path) ?? path;
+            isDirectory = Directory.Exists(targetPath);
+            return isDirectory;
+        }
+
+        targetPath = path;
+        isDirectory = false;
+        return true;
+    }
+
+    private static string MoveExtensionTargetToTrash(AiExtensionItem item, string targetPath, bool isDirectory)
+    {
+        var trashRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "AIHelper",
+            "extension-trash");
+        Directory.CreateDirectory(trashRoot);
+
+        var targetName = Path.GetFileName(targetPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var safeName = SanitizeFileName(string.IsNullOrWhiteSpace(targetName) ? item.Name : targetName);
+        var destinationPath = CreateUniqueExtensionTrashPath(
+            Path.Combine(trashRoot, $"{DateTime.Now:yyyyMMdd-HHmmss}-{safeName}"),
+            isDirectory);
+
+        if (isDirectory)
+        {
+            Directory.Move(targetPath, destinationPath);
+        }
+        else
+        {
+            var destinationFilePath = destinationPath;
+            var destinationDirectory = Path.GetDirectoryName(destinationFilePath);
+
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            File.Move(targetPath, destinationFilePath);
+        }
+
+        return destinationPath;
+    }
+
+    private static string CreateUniqueExtensionTrashPath(string path, bool isDirectory)
+    {
+        if (isDirectory)
+        {
+            if (!Directory.Exists(path) && !File.Exists(path))
+            {
+                return path;
+            }
+
+            for (var index = 1; index < 10_000; index++)
+            {
+                var candidate = $"{path}-{index}";
+
+                if (!Directory.Exists(candidate) && !File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return $"{path}-{Guid.NewGuid():N}";
+        }
+
+        var directory = Path.GetDirectoryName(path) ?? string.Empty;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        var candidatePath = Path.Combine(directory, $"{name}{extension}");
+
+        if (!File.Exists(candidatePath) && !Directory.Exists(candidatePath))
+        {
+            return candidatePath;
+        }
+
+        for (var index = 1; index < 10_000; index++)
+        {
+            candidatePath = Path.Combine(directory, $"{name}-{index}{extension}");
+
+            if (!File.Exists(candidatePath) && !Directory.Exists(candidatePath))
+            {
+                return candidatePath;
+            }
+        }
+
+        return Path.Combine(directory, $"{name}-{Guid.NewGuid():N}{extension}");
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        var safe = new string(value
+            .Select(character => invalidCharacters.Contains(character) ? '_' : character)
+            .ToArray())
+            .Trim();
+
+        return string.IsNullOrWhiteSpace(safe) ? "extension" : safe;
     }
 
     private AiExtensionItem BuildExtensionFromEditor()
@@ -4048,11 +5532,35 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Id = Guid.NewGuid().ToString("N"),
             Name = ExtensionName.Trim(),
             Kind = ParseExtensionKind(SelectedExtensionKind),
+            TargetApp = NormalizeExtensionTargetAppValue(ExtensionTargetApp),
             CommandOrUri = ExtensionCommandOrUri.Trim(),
             Description = ExtensionDescription.Trim(),
             IsInstalled = true,
             IsEnabled = ExtensionIsEnabled
         };
+    }
+
+    private void PrepareNewCustomExtension(AiExtensionKind kind)
+    {
+        SelectedExtension = null;
+        SelectedExtensionKind = FormatExtensionKindValue(kind);
+        ExtensionTargetApp = NormalizeExtensionTargetAppValue(SelectedExtensionTarget == "All"
+            ? "Codex"
+            : SelectedExtensionTarget);
+        ExtensionName = string.Empty;
+        ExtensionCommandOrUri = kind == AiExtensionKind.Mcp
+            ? "mcp:"
+            : "plugin:";
+        ExtensionDescription = string.Empty;
+        ExtensionIsEnabled = true;
+        _showInstalledExtensionsTab = false;
+        _showCustomExtensionsTab = true;
+        RefreshExtensionTabBindings();
+        SetExtensionStatus(
+            "#F8E7D6",
+            kind == AiExtensionKind.Mcp
+                ? Strings["ExtensionsStatusNewMcpDraft"]
+                : Strings["ExtensionsStatusNewPluginDraft"]);
     }
 
     private void SaveExtensionsSafe()
@@ -4068,9 +5576,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void RefreshExtensionGridBindings()
+    private void RefreshExtensionGridBindings(string? selectedId = null)
     {
-        var selected = SelectedExtension;
+        selectedId ??= SelectedExtension?.Id;
         var currentItems = AiExtensions.ToList();
         foreach (var item in currentItems)
         {
@@ -4084,14 +5592,1189 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             AiExtensions.Add(item);
         }
 
-        SelectedExtension = selected;
+        RefreshExtensionViews(selectedId);
+    }
+
+    private void RefreshExtensionViews(string? selectedId = null)
+    {
+        SuggestedAiExtensions.Clear();
+        InstalledAiExtensions.Clear();
+        CustomAiExtensions.Clear();
+
+        foreach (var item in AiExtensions)
+        {
+            LocalizeExtensionItem(item);
+            if (!MatchesSelectedExtensionTarget(item))
+            {
+                continue;
+            }
+
+            if (!MatchesExtensionSearch(item))
+            {
+                continue;
+            }
+
+            if (item.IsCustom)
+            {
+                CustomAiExtensions.Add(item);
+            }
+
+            if (item.IsInstalled || item.IsCustom)
+            {
+                InstalledAiExtensions.Add(item);
+            }
+            else if (!item.IsDetected)
+            {
+                SuggestedAiExtensions.Add(item);
+            }
+        }
+
+        RefreshExtensionTabBindings();
+        SelectVisibleExtension(selectedId);
+    }
+
+    private void RefreshExtensionTabBindings()
+    {
+        OnPropertyChanged(nameof(DisplayedAiExtensions));
+        OnPropertyChanged(nameof(SuggestedExtensionsTabText));
+        OnPropertyChanged(nameof(InstalledExtensionsTabText));
+        OnPropertyChanged(nameof(CustomExtensionsTabText));
+        OnPropertyChanged(nameof(SuggestedExtensionsTabButtonBackground));
+        OnPropertyChanged(nameof(SuggestedExtensionsTabButtonForeground));
+        OnPropertyChanged(nameof(InstalledExtensionsTabButtonBackground));
+        OnPropertyChanged(nameof(InstalledExtensionsTabButtonForeground));
+        OnPropertyChanged(nameof(CustomExtensionsTabButtonBackground));
+        OnPropertyChanged(nameof(CustomExtensionsTabButtonForeground));
+        OnPropertyChanged(nameof(AllExtensionsTargetTabText));
+        OnPropertyChanged(nameof(CodexExtensionsTargetTabText));
+        OnPropertyChanged(nameof(OpenCodeExtensionsTargetTabText));
+        OnPropertyChanged(nameof(LmStudioExtensionsTargetTabText));
+        OnPropertyChanged(nameof(AllExtensionsTargetTabBackground));
+        OnPropertyChanged(nameof(AllExtensionsTargetTabForeground));
+        OnPropertyChanged(nameof(CodexExtensionsTargetTabBackground));
+        OnPropertyChanged(nameof(CodexExtensionsTargetTabForeground));
+        OnPropertyChanged(nameof(OpenCodeExtensionsTargetTabBackground));
+        OnPropertyChanged(nameof(OpenCodeExtensionsTargetTabForeground));
+        OnPropertyChanged(nameof(LmStudioExtensionsTargetTabBackground));
+        OnPropertyChanged(nameof(LmStudioExtensionsTargetTabForeground));
+    }
+
+    private void SelectVisibleExtension(string? selectedId = null)
+    {
+        SelectedExtension = DisplayedAiExtensions.FirstOrDefault(item =>
+                                string.Equals(item.Id, selectedId, StringComparison.OrdinalIgnoreCase)) ??
+                            DisplayedAiExtensions.FirstOrDefault();
+
         OnPropertyChanged(nameof(CanDeleteSelectedExtension));
+        OnPropertyChanged(nameof(CanOpenSelectedExtensionLocation));
         OnPropertyChanged(nameof(CanInstallSelectedExtension));
         OnPropertyChanged(nameof(CanEnableSelectedExtension));
         OnPropertyChanged(nameof(CanDisableSelectedExtension));
         OnPropertyChanged(nameof(CanRemoveSelectedExtension));
         OnPropertyChanged(nameof(CanSaveSelectedExtension));
         OnPropertyChanged(nameof(SelectedExtensionDetailsText));
+        OnPropertyChanged(nameof(SelectedExtensionPrimaryActionText));
+    }
+
+    private bool MatchesSelectedExtensionTarget(AiExtensionItem item)
+    {
+        return MatchesExtensionTarget(item, SelectedExtensionTarget);
+    }
+
+    private bool MatchesExtensionSearch(AiExtensionItem item)
+    {
+        if (string.IsNullOrWhiteSpace(ExtensionSearchText))
+        {
+            return true;
+        }
+
+        var query = ExtensionSearchText.Trim();
+        return item.Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               item.Description.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               item.CommandOrUri.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               item.KindDisplayLabel.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               item.TargetAppDisplayLabel.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+               item.SourceDisplayLabel.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool MatchesExtensionTarget(AiExtensionItem item, string target)
+    {
+        if (string.Equals(target, "All", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return string.Equals(
+            NormalizeExtensionTargetAppValue(item.TargetApp),
+            NormalizeExtensionTargetAppValue(target),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task RefreshDetectedExtensionsAsync()
+    {
+        if (_isDetectedExtensionsRefreshRunning)
+        {
+            return;
+        }
+
+        _isDetectedExtensionsRefreshRunning = true;
+
+        try
+        {
+            var snapshot = _lastEnvironmentSnapshot ??
+                           await Task.Run(_environmentService.GetEnvironmentSnapshot);
+
+            if (_lastEnvironmentSnapshot is null)
+            {
+                _lastEnvironmentSnapshot = snapshot;
+            }
+
+            var selectedId = SelectedExtension?.Id;
+            var changed = MergeDetectedExtensions(snapshot);
+            changed |= RemoveMissingDetectedExtensions();
+
+            if (changed)
+            {
+                RefreshExtensionGridBindings(selectedId);
+                SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusDetectedLoaded"]);
+            }
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to detect local extensions.", exception);
+        }
+        finally
+        {
+            _isDetectedExtensionsRefreshRunning = false;
+        }
+    }
+
+    private async Task RefreshManagedExtensionsAsync()
+    {
+        if (_isManagedExtensionsRefreshRunning)
+        {
+            return;
+        }
+
+        _isManagedExtensionsRefreshRunning = true;
+
+        try
+        {
+            var selectedId = SelectedExtension?.Id;
+            await _extensionManagementService.RefreshAsync(AiExtensions);
+            RefreshExtensionGridBindings(selectedId);
+            SetExtensionStatus("#F8E7D6", Strings["ExtensionsStatusVerified"]);
+        }
+        catch (Exception exception)
+        {
+            _logService.Error(nameof(MainWindow), "Failed to verify managed extensions.", exception);
+            SetExtensionStatus(
+                "#FFD6D6",
+                Strings.Format("ExtensionsStatusVerificationFailed", exception.Message));
+        }
+        finally
+        {
+            _isManagedExtensionsRefreshRunning = false;
+        }
+    }
+
+    private bool MergeDetectedExtensions(CodexEnvironmentSnapshot snapshot)
+    {
+        var changed = false;
+
+        changed |= MergeDetectedCodexSkills(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "skills"),
+            "detected-skill");
+        changed |= MergeDetectedCodexPlugins(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "plugins"),
+            "detected-plugin");
+        changed |= MergeDetectedCodexConfig(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "config.toml"));
+        changed |= MergeDetectedOpenCodeConfig();
+        changed |= MergeDetectedLmStudioConfig();
+
+        return changed;
+    }
+
+    private bool MergeDetectedCodexSkills(
+        string rootDirectory,
+        string idPrefix,
+        string targetApp = "Codex")
+    {
+        if (!Directory.Exists(rootDirectory))
+        {
+            return false;
+        }
+
+        var changed = false;
+
+        foreach (var skillFilePath in Directory.EnumerateFiles(rootDirectory, "SKILL.md", SearchOption.AllDirectories).Take(240))
+        {
+            var skillDirectory = Path.GetDirectoryName(skillFilePath);
+            if (string.IsNullOrWhiteSpace(skillDirectory))
+            {
+                continue;
+            }
+
+            var manifest = ReadSkillManifest(skillFilePath);
+            var fallbackName = Path.GetFileName(skillDirectory);
+            var name = string.IsNullOrWhiteSpace(manifest.Name) ? fallbackName : manifest.Name;
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            changed |= UpsertDetectedExtension(
+                $"{idPrefix}-{SanitizeExtensionId(GetRelativePathSafe(rootDirectory, skillDirectory))}",
+                name,
+                AiExtensionKind.Skill,
+                skillFilePath,
+                skillFilePath,
+                string.IsNullOrWhiteSpace(manifest.Description)
+                    ? Strings["ExtensionDetectedCodexSkillDescription"]
+                    : manifest.Description,
+                targetApp);
+        }
+
+        return changed;
+    }
+
+    private bool MergeDetectedCodexPlugins(
+        string rootDirectory,
+        string idPrefix)
+    {
+        if (!Directory.Exists(rootDirectory))
+        {
+            return false;
+        }
+
+        var changed = false;
+
+        foreach (var pluginJsonPath in Directory.EnumerateFiles(rootDirectory, "plugin.json", SearchOption.AllDirectories).Take(120))
+        {
+            var manifestDirectory = Path.GetDirectoryName(pluginJsonPath);
+            if (string.IsNullOrWhiteSpace(manifestDirectory) ||
+                !string.Equals(Path.GetFileName(manifestDirectory), ".codex-plugin", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var pluginDirectory = Directory.GetParent(manifestDirectory)?.FullName;
+            if (string.IsNullOrWhiteSpace(pluginDirectory))
+            {
+                continue;
+            }
+
+            var manifest = ReadPluginManifest(pluginJsonPath);
+            var fallbackName = Path.GetFileName(pluginDirectory);
+            var name = string.IsNullOrWhiteSpace(manifest.Name) ? fallbackName : manifest.Name;
+            var description = string.IsNullOrWhiteSpace(manifest.Description)
+                ? Strings["ExtensionDetectedCodexPluginDescription"]
+                : manifest.Description;
+
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                changed |= UpsertDetectedExtension(
+                    $"{idPrefix}-{SanitizeExtensionId(GetRelativePathSafe(rootDirectory, pluginDirectory))}",
+                    name,
+                    AiExtensionKind.Plugin,
+                    pluginJsonPath,
+                    pluginDirectory,
+                    description);
+            }
+
+            var pluginSkillsDirectory = Path.Combine(pluginDirectory, "skills");
+            if (Directory.Exists(pluginSkillsDirectory))
+            {
+                changed |= MergeDetectedCodexSkills(pluginSkillsDirectory, $"{idPrefix}-skill-{SanitizeExtensionId(name)}");
+            }
+        }
+
+        return changed;
+    }
+
+    private bool MergeDetectedCodexConfig(string configPath)
+    {
+        if (!File.Exists(configPath))
+        {
+            return false;
+        }
+
+        var changed = false;
+
+        try
+        {
+            var text = File.ReadAllText(configPath);
+            changed |= MergeDetectedTomlMcpServers(
+                text,
+                configPath,
+                "detected-codex-mcp",
+                "Codex",
+                Strings["ExtensionDetectedCodexMcpDescription"]);
+
+            foreach (var plugin in ReadCodexPluginSections(text))
+            {
+                changed |= UpsertDetectedExtension(
+                    $"detected-codex-config-plugin-{SanitizeExtensionId(plugin.Name)}",
+                    plugin.Name,
+                    AiExtensionKind.Plugin,
+                    configPath,
+                    $"plugin:{plugin.Name}",
+                    Strings["ExtensionDetectedCodexConfigPluginDescription"],
+                    "Codex",
+                    plugin.Enabled,
+                    configPath);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logService.Info(nameof(MainWindow), $"Failed to read Codex config: {exception.Message}");
+        }
+
+        return changed;
+    }
+
+    private bool MergeDetectedOpenCodeConfig()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var configDirectory = Path.Combine(profile, ".config", "opencode");
+        var changed = false;
+
+        changed |= MergeDetectedOpenCodeJson(Path.Combine(configDirectory, "opencode.json"));
+        changed |= MergeDetectedOpenCodeJson(Path.Combine(configDirectory, "opencode-swarm.json"));
+        changed |= MergeDetectedOpenCodeJson(Path.Combine(configDirectory, "dcp.jsonc"));
+        changed |= MergeDetectedCodexSkills(
+            Path.Combine(configDirectory, "skill-libraries"),
+            "detected-opencode-skill",
+            "OpenCode");
+
+        return changed;
+    }
+
+    private bool MergeDetectedOpenCodeJson(string configPath)
+    {
+        if (!File.Exists(configPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(ReadJsonWithComments(configPath));
+            var root = document.RootElement;
+            var changed = false;
+
+            if (root.ValueKind == JsonValueKind.Object &&
+                TryGetJsonPropertyIgnoreCase(root, "mcp", out var mcpElement) &&
+                mcpElement.ValueKind == JsonValueKind.Object)
+            {
+                changed |= MergeDetectedJsonMcpServers(
+                    mcpElement,
+                    configPath,
+                    "detected-opencode-mcp",
+                    "OpenCode",
+                    Strings["ExtensionDetectedOpenCodeMcpDescription"]);
+            }
+
+            if (root.ValueKind == JsonValueKind.Object &&
+                TryGetJsonPropertyIgnoreCase(root, "plugin", out var pluginElement))
+            {
+                changed |= MergeDetectedJsonPluginList(
+                    pluginElement,
+                    configPath,
+                    "detected-opencode-plugin",
+                    "OpenCode",
+                    Strings["ExtensionDetectedOpenCodePluginDescription"]);
+            }
+
+            return changed;
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logService.Info(nameof(MainWindow), $"Failed to read OpenCode config {configPath}: {exception.Message}");
+            return false;
+        }
+    }
+
+    private bool MergeDetectedLmStudioConfig()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var lmStudioDirectory = Path.Combine(profile, ".lmstudio");
+        var changed = false;
+
+        changed |= MergeDetectedLmStudioMcpJson(Path.Combine(lmStudioDirectory, "mcp.json"));
+        changed |= MergeDetectedLmStudioMcpServerDirectories(Path.Combine(lmStudioDirectory, "mcp-servers"));
+        changed |= MergeDetectedLmStudioPluginManifests(Path.Combine(lmStudioDirectory, "extensions", "plugins"));
+
+        return changed;
+    }
+
+    private bool MergeDetectedLmStudioMcpJson(string configPath)
+    {
+        if (!File.Exists(configPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(configPath));
+            var root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object ||
+                !TryGetJsonPropertyIgnoreCase(root, "mcpServers", out var serversElement) ||
+                serversElement.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            return MergeDetectedJsonMcpServers(
+                serversElement,
+                configPath,
+                "detected-lmstudio-mcp",
+                "LmStudio",
+                Strings["ExtensionDetectedLmStudioMcpDescription"]);
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            _logService.Info(nameof(MainWindow), $"Failed to read LM Studio MCP config: {exception.Message}");
+            return false;
+        }
+    }
+
+    private bool MergeDetectedLmStudioMcpServerDirectories(string rootDirectory)
+    {
+        if (!Directory.Exists(rootDirectory))
+        {
+            return false;
+        }
+
+        var changed = false;
+
+        foreach (var directory in SafeEnumerateDirectories(rootDirectory).Take(80))
+        {
+            var name = Path.GetFileName(directory);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var bridgeConfigPath = Path.Combine(directory, "mcp-bridge-config.json");
+            var commandOrUri = File.Exists(bridgeConfigPath)
+                ? ReadMcpCommandSummaryFromJsonFile(bridgeConfigPath)
+                : directory;
+
+            changed |= UpsertDetectedExtension(
+                $"detected-lmstudio-mcp-dir-{SanitizeExtensionId(name)}",
+                name,
+                AiExtensionKind.Mcp,
+                directory,
+                string.IsNullOrWhiteSpace(commandOrUri) ? directory : commandOrUri,
+                Strings["ExtensionDetectedLmStudioMcpDirectoryDescription"],
+                "LmStudio",
+                true,
+                directory);
+        }
+
+        return changed;
+    }
+
+    private bool MergeDetectedLmStudioPluginManifests(string rootDirectory)
+    {
+        if (!Directory.Exists(rootDirectory))
+        {
+            return false;
+        }
+
+        var changed = false;
+
+        foreach (var manifestPath in SafeEnumerateFiles(rootDirectory, "manifest.json").Take(160))
+        {
+            if (manifestPath.Contains($"{Path.DirectorySeparatorChar}node_modules{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var directory = Path.GetDirectoryName(manifestPath);
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                continue;
+            }
+
+            var manifest = ReadLmStudioPluginManifest(manifestPath);
+            var fallbackName = Path.GetFileName(directory);
+            var name = string.IsNullOrWhiteSpace(manifest.Name) ? fallbackName : manifest.Name;
+            var kind = string.Equals(manifest.Owner, "mcp", StringComparison.OrdinalIgnoreCase)
+                ? AiExtensionKind.Mcp
+                : AiExtensionKind.Plugin;
+            var commandOrUri = kind == AiExtensionKind.Mcp
+                ? ReadMcpCommandSummaryFromJsonFile(Path.Combine(directory, "mcp-bridge-config.json"))
+                : directory;
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            changed |= UpsertDetectedExtension(
+                $"detected-lmstudio-plugin-{SanitizeExtensionId(GetRelativePathSafe(rootDirectory, directory))}",
+                name,
+                kind,
+                manifestPath,
+                string.IsNullOrWhiteSpace(commandOrUri) ? directory : commandOrUri,
+                kind == AiExtensionKind.Mcp
+                    ? Strings["ExtensionDetectedLmStudioMcpDescription"]
+                    : Strings["ExtensionDetectedLmStudioPluginDescription"],
+                "LmStudio",
+                true,
+                directory);
+        }
+
+        return changed;
+    }
+
+    private bool UpsertDetectedExtension(
+        string id,
+        string name,
+        AiExtensionKind kind,
+        string detail,
+        string commandOrUri,
+        string description,
+        string targetApp = "Codex",
+        bool isEnabled = true,
+        string? detectionPath = null)
+    {
+        var existing = AiExtensions.FirstOrDefault(item =>
+            string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));
+        var normalizedDetectionPath = string.IsNullOrWhiteSpace(detectionPath)
+            ? commandOrUri
+            : detectionPath;
+
+        if (existing is null)
+        {
+            AiExtensions.Add(
+                new AiExtensionItem
+                {
+                    Id = id,
+                    Name = name,
+                    Kind = kind,
+                    TargetApp = NormalizeExtensionTargetAppValue(targetApp),
+                    Description = BuildDetectedDescription(description, detail),
+                    CommandOrUri = commandOrUri,
+                    DetectionPath = normalizedDetectionPath,
+                    IsDetected = true,
+                    IsInstalled = true,
+                    IsEnabled = isEnabled
+                });
+            return true;
+        }
+
+        existing.Name = name;
+        existing.Kind = kind;
+        existing.TargetApp = NormalizeExtensionTargetAppValue(targetApp);
+        existing.Description = BuildDetectedDescription(description, detail);
+        existing.CommandOrUri = commandOrUri;
+        existing.DetectionPath = normalizedDetectionPath;
+        existing.IsPreset = false;
+        existing.IsDetected = true;
+        existing.IsInstalled = true;
+        existing.IsEnabled = isEnabled;
+
+        return true;
+    }
+
+    private static string BuildDetectedDescription(string description, string detail)
+    {
+        return string.IsNullOrWhiteSpace(detail)
+            ? description
+            : $"{description}{Environment.NewLine}{Environment.NewLine}{detail}";
+    }
+
+    private bool MergeDetectedJsonMcpServers(
+        JsonElement serversElement,
+        string configPath,
+        string idPrefix,
+        string targetApp,
+        string description)
+    {
+        var changed = false;
+
+        foreach (var server in serversElement.EnumerateObject())
+        {
+            if (server.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var commandSummary = BuildJsonMcpCommandSummary(server.Value);
+            var enabled = !TryGetJsonPropertyIgnoreCase(server.Value, "enabled", out var enabledElement) ||
+                          enabledElement.ValueKind != JsonValueKind.False;
+
+            changed |= UpsertDetectedExtension(
+                $"{idPrefix}-{SanitizeExtensionId(server.Name)}",
+                server.Name,
+                AiExtensionKind.Mcp,
+                configPath,
+                string.IsNullOrWhiteSpace(commandSummary) ? $"mcp:{server.Name}" : commandSummary,
+                description,
+                targetApp,
+                enabled,
+                configPath);
+        }
+
+        return changed;
+    }
+
+    private bool MergeDetectedJsonPluginList(
+        JsonElement pluginElement,
+        string configPath,
+        string idPrefix,
+        string targetApp,
+        string description)
+    {
+        var changed = false;
+
+        if (pluginElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in pluginElement.EnumerateArray())
+            {
+                var name = item.ValueKind == JsonValueKind.String
+                    ? item.GetString()
+                    : ReadJsonString(item, "name");
+
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                changed |= UpsertDetectedExtension(
+                    $"{idPrefix}-{SanitizeExtensionId(name)}",
+                    name,
+                    AiExtensionKind.Plugin,
+                    configPath,
+                    $"plugin:{name}",
+                    description,
+                    targetApp,
+                    true,
+                    configPath);
+            }
+        }
+        else if (pluginElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var item in pluginElement.EnumerateObject())
+            {
+                changed |= UpsertDetectedExtension(
+                    $"{idPrefix}-{SanitizeExtensionId(item.Name)}",
+                    item.Name,
+                    AiExtensionKind.Plugin,
+                    configPath,
+                    $"plugin:{item.Name}",
+                    description,
+                    targetApp,
+                    true,
+                    configPath);
+            }
+        }
+
+        return changed;
+    }
+
+    private bool MergeDetectedTomlMcpServers(
+        string text,
+        string configPath,
+        string idPrefix,
+        string targetApp,
+        string description)
+    {
+        var sections = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        string? currentName = null;
+
+        foreach (var rawLine in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#'))
+            {
+                continue;
+            }
+
+            var sectionMatch = Regex.Match(
+                line,
+                @"^\[(?:mcp_servers|mcpServers)\.(?:""(?<name>[^""]+)""|'(?<name>[^']+)'|(?<name>[^\].]+))(?:\.[^\]]+)?\]$",
+                RegexOptions.IgnoreCase);
+
+            if (sectionMatch.Success)
+            {
+                currentName = sectionMatch.Groups["name"].Value.Trim();
+                if (!sections.ContainsKey(currentName))
+                {
+                    sections[currentName] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                }
+
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentName) || !sections.TryGetValue(currentName, out var values))
+            {
+                continue;
+            }
+
+            var separatorIndex = line.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            var key = line[..separatorIndex].Trim();
+            var value = CleanManifestValue(line[(separatorIndex + 1)..].Trim());
+            values[key] = value;
+        }
+
+        var changed = false;
+
+        foreach (var section in sections)
+        {
+            var commandSummary = BuildTomlMcpCommandSummary(section.Key, section.Value);
+            var enabled = !section.Value.TryGetValue("enabled", out var enabledText) ||
+                          !string.Equals(enabledText, "false", StringComparison.OrdinalIgnoreCase);
+
+            changed |= UpsertDetectedExtension(
+                $"{idPrefix}-{SanitizeExtensionId(section.Key)}",
+                section.Key,
+                AiExtensionKind.Mcp,
+                configPath,
+                commandSummary,
+                description,
+                targetApp,
+                enabled,
+                configPath);
+        }
+
+        return changed;
+    }
+
+    private static IEnumerable<(string Name, bool Enabled)> ReadCodexPluginSections(string text)
+    {
+        string? currentName = null;
+        var enabled = true;
+
+        foreach (var rawLine in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            var sectionMatch = Regex.Match(
+                line,
+                @"^\[plugins\.(?:""(?<name>[^""]+)""|'(?<name>[^']+)'|(?<name>[^\]]+))\]$",
+                RegexOptions.IgnoreCase);
+
+            if (sectionMatch.Success)
+            {
+                if (!string.IsNullOrWhiteSpace(currentName))
+                {
+                    yield return (currentName, enabled);
+                }
+
+                currentName = sectionMatch.Groups["name"].Value.Trim();
+                enabled = true;
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(currentName))
+            {
+                continue;
+            }
+
+            var enabledMatch = Regex.Match(line, @"^enabled\s*=\s*(?<value>true|false)\s*$", RegexOptions.IgnoreCase);
+            if (enabledMatch.Success)
+            {
+                enabled = string.Equals(enabledMatch.Groups["value"].Value, "true", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentName))
+        {
+            yield return (currentName, enabled);
+        }
+    }
+
+    private static string BuildTomlMcpCommandSummary(string name, IReadOnlyDictionary<string, string> values)
+    {
+        if (values.TryGetValue("url", out var url) && !string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        if (values.TryGetValue("command", out var command) && !string.IsNullOrWhiteSpace(command))
+        {
+            if (values.TryGetValue("args", out var args) && !string.IsNullOrWhiteSpace(args))
+            {
+                return $"{command} {args}";
+            }
+
+            return command;
+        }
+
+        return $"mcp:{name}";
+    }
+
+    private static string BuildJsonMcpCommandSummary(JsonElement serverElement)
+    {
+        if (TryGetJsonPropertyIgnoreCase(serverElement, "url", out var urlElement) &&
+            urlElement.ValueKind == JsonValueKind.String)
+        {
+            return urlElement.GetString() ?? string.Empty;
+        }
+
+        if (!TryGetJsonPropertyIgnoreCase(serverElement, "command", out var commandElement))
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>();
+        AppendJsonCommandParts(commandElement, parts);
+
+        if (TryGetJsonPropertyIgnoreCase(serverElement, "args", out var argsElement))
+        {
+            AppendJsonCommandParts(argsElement, parts);
+        }
+
+        return string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+    }
+
+    private static void AppendJsonCommandParts(JsonElement element, ICollection<string> parts)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            parts.Add(element.GetString() ?? string.Empty);
+            return;
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var item in element.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                parts.Add(item.GetString() ?? string.Empty);
+            }
+        }
+    }
+
+    private static string ReadMcpCommandSummaryFromJsonFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                ? BuildJsonMcpCommandSummary(document.RootElement)
+                : string.Empty;
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static (string Name, string Owner, string Description) ReadLmStudioPluginManifest(string manifestPath)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            var root = document.RootElement;
+            return (
+                ReadJsonString(root, "name"),
+                ReadJsonString(root, "owner"),
+                ReadJsonString(root, "description"));
+        }
+        catch (Exception exception) when (exception is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return (string.Empty, string.Empty, string.Empty);
+        }
+    }
+
+    private static bool TryGetJsonPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement property)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var candidate in element.EnumerateObject())
+            {
+                if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    property = candidate.Value;
+                    return true;
+                }
+            }
+        }
+
+        property = default;
+        return false;
+    }
+
+    private static string ReadJsonWithComments(string path)
+    {
+        var text = File.ReadAllText(path);
+        return StripJsonLineComments(text);
+    }
+
+    private static string StripJsonLineComments(string text)
+    {
+        var result = new System.Text.StringBuilder(text.Length);
+        var inString = false;
+        var escaped = false;
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            var current = text[index];
+
+            if (current == '"' && !escaped)
+            {
+                inString = !inString;
+            }
+
+            if (!inString && current == '/' && index + 1 < text.Length && text[index + 1] == '/')
+            {
+                while (index < text.Length && text[index] != '\r' && text[index] != '\n')
+                {
+                    index++;
+                }
+
+                if (index < text.Length)
+                {
+                    result.Append(text[index]);
+                }
+
+                escaped = false;
+                continue;
+            }
+
+            result.Append(current);
+            escaped = current == '\\' && !escaped;
+            if (current != '\\')
+            {
+                escaped = false;
+            }
+        }
+
+        return result.ToString();
+    }
+
+    private static IEnumerable<string> SafeEnumerateDirectories(string rootDirectory)
+    {
+        try
+        {
+            return Directory.EnumerateDirectories(rootDirectory);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static IEnumerable<string> SafeEnumerateFiles(string rootDirectory, string pattern)
+    {
+        var pending = new Stack<string>();
+        pending.Push(rootDirectory);
+
+        while (pending.Count > 0)
+        {
+            var current = pending.Pop();
+            IEnumerable<string> files;
+            IEnumerable<string> directories;
+
+            try
+            {
+                files = Directory.EnumerateFiles(current, pattern);
+                directories = Directory.EnumerateDirectories(current);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            foreach (var file in files)
+            {
+                yield return file;
+            }
+
+            foreach (var directory in directories)
+            {
+                if (directory.Contains($"{Path.DirectorySeparatorChar}node_modules", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                pending.Push(directory);
+            }
+        }
+    }
+
+    private static (string Name, string Description) ReadSkillManifest(string skillFilePath)
+    {
+        try
+        {
+            using var reader = File.OpenText(skillFilePath);
+            var firstLine = reader.ReadLine();
+            if (!string.Equals(firstLine?.Trim(), "---", StringComparison.Ordinal))
+            {
+                return (string.Empty, string.Empty);
+            }
+
+            var name = string.Empty;
+            var description = string.Empty;
+
+            for (var index = 0; index < 80; index++)
+            {
+                var line = reader.ReadLine();
+                if (line is null || string.Equals(line.Trim(), "---", StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                var separatorIndex = line.IndexOf(':');
+                if (separatorIndex <= 0)
+                {
+                    continue;
+                }
+
+                var key = line[..separatorIndex].Trim();
+                var value = CleanManifestValue(line[(separatorIndex + 1)..]);
+
+                if (string.Equals(key, "name", StringComparison.OrdinalIgnoreCase))
+                {
+                    name = value;
+                }
+                else if (string.Equals(key, "description", StringComparison.OrdinalIgnoreCase))
+                {
+                    description = value;
+                }
+            }
+
+            return (name, description);
+        }
+        catch
+        {
+            return (string.Empty, string.Empty);
+        }
+    }
+
+    private static (string Name, string Description) ReadPluginManifest(string pluginJsonPath)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(pluginJsonPath));
+            var root = document.RootElement;
+            var name = ReadJsonString(root, "name");
+            var description = ReadJsonString(root, "description");
+
+            if (root.TryGetProperty("interface", out var interfaceElement) &&
+                interfaceElement.ValueKind == JsonValueKind.Object)
+            {
+                var displayName = ReadJsonString(interfaceElement, "displayName");
+                var shortDescription = ReadJsonString(interfaceElement, "shortDescription");
+
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    name = displayName;
+                }
+
+                if (!string.IsNullOrWhiteSpace(shortDescription))
+                {
+                    description = shortDescription;
+                }
+            }
+
+            return (name, description);
+        }
+        catch
+        {
+            return (string.Empty, string.Empty);
+        }
+    }
+
+    private static string ReadJsonString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString() ?? string.Empty
+            : string.Empty;
+    }
+
+    private static string CleanManifestValue(string value)
+    {
+        return value.Trim().Trim('"', '\'');
+    }
+
+    private static string GetRelativePathSafe(string rootDirectory, string path)
+    {
+        try
+        {
+            return Path.GetRelativePath(rootDirectory, path);
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    private static string SanitizeExtensionId(string value)
+    {
+        var chars = value
+            .Select(character => char.IsLetterOrDigit(character) ? char.ToLowerInvariant(character) : '-')
+            .ToArray();
+        return new string(chars).Trim('-');
+    }
+
+    private bool MergeFastDetectedExtensions()
+    {
+        var changed = false;
+
+        changed |= MergeDetectedCodexSkills(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "skills"),
+            "detected-skill");
+        changed |= MergeDetectedCodexPlugins(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "plugins"),
+            "detected-plugin");
+        changed |= MergeDetectedCodexConfig(
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "config.toml"));
+        changed |= MergeDetectedOpenCodeConfig();
+        changed |= MergeDetectedLmStudioConfig();
+
+        return changed;
+    }
+
+    private void RemoveObsoleteDetectedToolEntries()
+    {
+        var obsoleteIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "detected-tool-opencode",
+            "detected-tool-lm-studio",
+            "detected-tool-ollama"
+        };
+
+        foreach (var item in AiExtensions.Where(item => obsoleteIds.Contains(item.Id)).ToList())
+        {
+            AiExtensions.Remove(item);
+        }
+    }
+
+    private bool RemoveMissingDetectedExtensions()
+    {
+        var missingItems = AiExtensions
+            .Where(item => item.IsDetected && !TryGetExtensionFileSystemTarget(item, forDelete: false, out _, out _))
+            .ToList();
+
+        foreach (var item in missingItems)
+        {
+            AiExtensions.Remove(item);
+        }
+
+        return missingItems.Count > 0;
     }
 
     private void SetExtensionStatus(string foreground, string text)
@@ -4102,19 +6785,76 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private static AiExtensionKind ParseExtensionKind(string? value)
     {
-        return string.Equals(value, "MCP", StringComparison.OrdinalIgnoreCase)
-            ? AiExtensionKind.Mcp
-            : AiExtensionKind.Plugin;
+        if (string.Equals(value, "MCP", StringComparison.OrdinalIgnoreCase))
+        {
+            return AiExtensionKind.Mcp;
+        }
+
+        if (string.Equals(value, "Skill", StringComparison.OrdinalIgnoreCase))
+        {
+            return AiExtensionKind.Skill;
+        }
+
+        return AiExtensionKind.Plugin;
+    }
+
+    private static string FormatExtensionKindValue(AiExtensionKind kind)
+    {
+        return kind switch
+        {
+            AiExtensionKind.Mcp => "MCP",
+            AiExtensionKind.Skill => "Skill",
+            _ => "Plugin"
+        };
+    }
+
+    private static string NormalizeExtensionTargetAppValue(string? value)
+    {
+        if (string.Equals(value, "OpenCode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "OpenCode";
+        }
+
+        if (string.Equals(value, "LM Studio", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "LmStudio", StringComparison.OrdinalIgnoreCase))
+        {
+            return "LmStudio";
+        }
+
+        return "Codex";
     }
 
     private void LocalizeExtensionItem(AiExtensionItem item)
     {
-        item.SourceDisplayLabel = item.IsPreset ? Strings["ExtensionsSourcePreset"] : Strings["ExtensionsSourceCustom"];
-        item.InstallStateLabel = item.IsInstalled
-            ? item.IsEnabled
-                ? Strings["ExtensionsInstallStateInstalledEnabled"]
-                : Strings["ExtensionsInstallStateInstalledDisabled"]
-            : Strings["ExtensionsInstallStateNotInstalled"];
+        item.TargetApp = NormalizeExtensionTargetAppValue(item.TargetApp);
+        item.KindDisplayLabel = item.Kind switch
+        {
+            AiExtensionKind.Mcp => Strings["ExtensionsKindMcp"],
+            AiExtensionKind.Skill => Strings["ExtensionsKindSkill"],
+            _ => Strings["ExtensionsKindPlugin"]
+        };
+        item.TargetAppDisplayLabel = item.TargetApp switch
+        {
+            "OpenCode" => Strings["ExtensionsTargetOpenCodeTab"],
+            "LmStudio" => Strings["ExtensionsTargetLmStudioTab"],
+            _ => Strings["ExtensionsTargetCodexTab"]
+        };
+        item.SourceDisplayLabel = item.IsDetected
+            ? Strings["ExtensionsSourceDetected"]
+            : item.IsPreset
+                ? Strings["ExtensionsSourcePreset"]
+                : Strings["ExtensionsSourceCustom"];
+        item.InstallStateLabel = item.IsBusy
+            ? Strings["ExtensionsInstallStateWorking"]
+            : item.HasVerificationError
+                ? Strings["ExtensionsInstallStateError"]
+                : item.IsVerified
+                    ? Strings["ExtensionsInstallStateVerified"]
+                    : item.IsCustom
+                        ? Strings["ExtensionsInstallStateSavedRecord"]
+                        : item.IsInstalled
+                            ? Strings["ExtensionsInstallStateConfigured"]
+                            : Strings["ExtensionsInstallStateNotInstalled"];
     }
 
     private void RefreshLaunchOptionCollections()
@@ -4282,62 +7022,109 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return Strings["SetupOllamaGuidanceReady"];
     }
 
-    private void RefreshLocalAiModelOptions(IReadOnlyDictionary<string, string>? installedModels = null)
+    private void RefreshLocalAiModelOptions(CodexEnvironmentSnapshot? snapshot = null)
     {
-        var localModels = installedModels ??
-                          _lastEnvironmentSnapshot?.InstalledOllamaModels ??
+        snapshot ??= _lastEnvironmentSnapshot;
+        var localModels = snapshot?.InstalledOllamaModels ??
                           new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var specs = new[]
+        {
+            new LocalModelSpec(
+                "Qwen 3.5 0.8B",
+                "qwen3.5:0.8b",
+                "0.8B · 1.0 GB",
+                Strings["SetupLocalAiModelLightDescription"],
+                1.0,
+                4,
+                0),
+            new LocalModelSpec(
+                "Qwen 3.5 4B",
+                "qwen3.5:4b",
+                "4B · 3.4 GB",
+                Strings["SetupLocalAiModelBalancedDescription"],
+                3.4,
+                8,
+                4),
+            new LocalModelSpec(
+                "Qwen 3.5 9B",
+                "qwen3.5:9b",
+                "9B · 6.6 GB",
+                Strings["SetupLocalAiModelStrongDescription"],
+                6.6,
+                16,
+                8),
+            new LocalModelSpec(
+                "Qwen3 Coder 30B",
+                "qwen3-coder:30b",
+                "30B · 19 GB",
+                Strings["SetupLocalAiModelCoderDescription"],
+                19,
+                32,
+                20)
+        };
 
+        var recommendedTag = GetRecommendedLocalModelTag(snapshot);
         LocalAiModelOptions.Clear();
 
-        LocalAiModelOptions.Add(
-            new LocalAiModelOption
-            {
-                Name = "Qwen2.5 Coder 7B",
-                ModelTag = "qwen2.5-coder:7b",
-                SizeLabel = "7B",
-                Description = Strings["SetupLocalAiModelCoderDescription"],
-                IsInstalled = localModels.TryGetValue("qwen2.5-coder:7b", out var qwenSize),
-                InstalledStatusText = localModels.ContainsKey("qwen2.5-coder:7b")
-                    ? Strings["SetupLocalAiInstalled"]
-                    : Strings["SetupLocalAiNotInstalled"],
-                InstalledStatusBrush = localModels.ContainsKey("qwen2.5-coder:7b") ? "#1F7A52" : "#5E6C76",
-                InstalledSizeText = localModels.TryGetValue("qwen2.5-coder:7b", out qwenSize)
-                    ? Strings.Format("SetupLocalAiInstalledSize", qwenSize)
-                    : Strings["SetupLocalAiMissingSize"]
-            });
-        LocalAiModelOptions.Add(
-            new LocalAiModelOption
-            {
-                Name = "Phi-4 Mini",
-                ModelTag = "phi4-mini",
-                SizeLabel = "3.8B",
-                Description = Strings["SetupLocalAiModelReasoningDescription"],
-                IsInstalled = localModels.TryGetValue("phi4-mini", out var phiSize),
-                InstalledStatusText = localModels.ContainsKey("phi4-mini")
-                    ? Strings["SetupLocalAiInstalled"]
-                    : Strings["SetupLocalAiNotInstalled"],
-                InstalledStatusBrush = localModels.ContainsKey("phi4-mini") ? "#1F7A52" : "#5E6C76",
-                InstalledSizeText = localModels.TryGetValue("phi4-mini", out phiSize)
-                    ? Strings.Format("SetupLocalAiInstalledSize", phiSize)
-                    : Strings["SetupLocalAiMissingSize"]
-            });
-        LocalAiModelOptions.Add(
-            new LocalAiModelOption
-            {
-                Name = "Gemma 3 4B",
-                ModelTag = "gemma3:4b",
-                SizeLabel = "4B",
-                Description = Strings["SetupLocalAiModelGeneralDescription"],
-                IsInstalled = localModels.TryGetValue("gemma3:4b", out var gemmaSize),
-                InstalledStatusText = localModels.ContainsKey("gemma3:4b")
-                    ? Strings["SetupLocalAiInstalled"]
-                    : Strings["SetupLocalAiNotInstalled"],
-                InstalledStatusBrush = localModels.ContainsKey("gemma3:4b") ? "#1F7A52" : "#5E6C76",
-                InstalledSizeText = localModels.TryGetValue("gemma3:4b", out gemmaSize)
-                    ? Strings.Format("SetupLocalAiInstalledSize", gemmaSize)
-                    : Strings["SetupLocalAiMissingSize"]
-            });
+        foreach (var spec in specs)
+        {
+            var downloadBytes = Gibibytes(spec.DownloadSizeGiB);
+            var minimumRamBytes = Gibibytes(spec.MinimumRamGiB);
+            var recommendedVramBytes = Gibibytes(spec.RecommendedVramGiB);
+            var hasKnownRam = snapshot?.TotalPhysicalMemoryBytes > 0;
+            var hasKnownDisk = snapshot?.SystemDriveFreeBytes > 0;
+            var ramFits = !hasKnownRam || snapshot!.TotalPhysicalMemoryBytes >= minimumRamBytes;
+            var diskFits = !hasKnownDisk || snapshot!.SystemDriveFreeBytes >= downloadBytes + Gibibytes(1);
+            var vramFits = recommendedVramBytes <= 0 ||
+                           snapshot?.GpuMemoryBytes >= recommendedVramBytes;
+            var isRecommended = string.Equals(spec.ModelTag, recommendedTag, StringComparison.OrdinalIgnoreCase);
+            var fitStatusText = !diskFits
+                ? Strings["SetupLocalAiFitNoDisk"]
+                : !ramFits
+                    ? Strings["SetupLocalAiFitNoRam"]
+                    : vramFits
+                        ? Strings["SetupLocalAiFitFast"]
+                        : Strings["SetupLocalAiFitRam"];
+            var fitStatusBrush = !diskFits || !ramFits
+                ? "#B42318"
+                : vramFits
+                    ? "#1F7A52"
+                    : "#B86E10";
+            var recommendationText = isRecommended
+                ? Strings["SetupLocalAiRecommendedForPc"]
+                : Strings.Format(
+                    "SetupLocalAiRequirementsFormat",
+                    FormatByteSize(minimumRamBytes),
+                    recommendedVramBytes > 0
+                        ? FormatByteSize(recommendedVramBytes)
+                        : Strings["SetupLocalAiGpuOptional"]);
+            var isInstalled = localModels.TryGetValue(spec.ModelTag, out var installedSize);
+
+            LocalAiModelOptions.Add(
+                new LocalAiModelOption
+                {
+                    Name = spec.Name,
+                    ModelTag = spec.ModelTag,
+                    SizeLabel = spec.SizeLabel,
+                    Description = spec.Description,
+                    DownloadSizeBytes = downloadBytes,
+                    MinimumRamBytes = minimumRamBytes,
+                    RecommendedVramBytes = recommendedVramBytes,
+                    IsRecommended = isRecommended,
+                    CanInstall = ramFits && diskFits,
+                    FitStatusText = fitStatusText,
+                    FitStatusBrush = fitStatusBrush,
+                    RecommendationText = recommendationText,
+                    IsInstalled = isInstalled,
+                    InstalledStatusText = isInstalled
+                        ? Strings["SetupLocalAiInstalled"]
+                        : Strings["SetupLocalAiNotInstalled"],
+                    InstalledStatusBrush = isInstalled ? "#1F7A52" : "#5E6C76",
+                    InstalledSizeText = isInstalled
+                        ? Strings.Format("SetupLocalAiInstalledSize", installedSize ?? string.Empty)
+                        : Strings["SetupLocalAiMissingSize"]
+                });
+        }
     }
 
     private void RefreshCreativeAiToolOptions(CodexEnvironmentSnapshot? snapshot = null)
@@ -4763,6 +7550,84 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                string.Equals(SelectedApprovalPolicy, "never", StringComparison.OrdinalIgnoreCase);
     }
 
+    private NewSessionAccessLevel GetNewSessionAccessLevel()
+    {
+        if (ShouldUseDangerousBypassForNewSession())
+        {
+            return NewSessionAccessLevel.Critical;
+        }
+
+        if (string.Equals(SelectedSandboxMode, "danger-full-access", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(SelectedApprovalPolicy, "never", StringComparison.OrdinalIgnoreCase))
+        {
+            return NewSessionAccessLevel.Caution;
+        }
+
+        return NewSessionAccessLevel.Safe;
+    }
+
+    private void NotifyNewSessionAccessSummaryChanged()
+    {
+        OnPropertyChanged(nameof(NewSessionAccessSummaryTitle));
+        OnPropertyChanged(nameof(NewSessionAccessSummaryText));
+        OnPropertyChanged(nameof(NewSessionAccessSummaryBackground));
+        OnPropertyChanged(nameof(NewSessionAccessSummaryForeground));
+        OnPropertyChanged(nameof(NewSessionAccessSummaryBorder));
+    }
+
+    private SessionHealthLevel GetSelectedSessionHealthLevel()
+    {
+        var session = SelectedSession;
+        if (session is null)
+        {
+            return SessionHealthLevel.Stable;
+        }
+
+        var fileSize = GetFileSizeSafely(session.FilePath);
+        if (session.TotalMessageCount >= 300 ||
+            session.ToolCallCount >= 100 ||
+            fileSize >= 16L * 1024 * 1024)
+        {
+            return SessionHealthLevel.Overloaded;
+        }
+
+        if (session.TotalMessageCount >= 150 ||
+            session.ToolCallCount >= 50 ||
+            fileSize >= 8L * 1024 * 1024)
+        {
+            return SessionHealthLevel.Long;
+        }
+
+        return SessionHealthLevel.Stable;
+    }
+
+    private static long GetFileSizeSafely(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private bool ConfirmDangerousNewSessionLaunch()
+    {
+        if (!ShouldUseDangerousBypassForNewSession())
+        {
+            return true;
+        }
+
+        return MessageBox.Show(
+                   this,
+                   Strings["NewSessionDangerousLaunchWarningMessage"],
+                   Strings["NewSessionDangerousLaunchWarningTitle"],
+                   MessageBoxButton.YesNo,
+                   MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
     private void LoadDnsPresets(DnsPreset? preferredPreset = null)
     {
         var presets = _dnsPresetSettingsService.LoadAllPresets(Strings);
@@ -5002,9 +7867,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         NewSessionStatusText = text;
     }
 
+    private void SetHomeLaunchStatus(string background, string foreground, string text)
+    {
+        HomeLaunchStatusBackground = background;
+        HomeLaunchStatusForeground = foreground;
+        HomeLaunchStatusText = text;
+    }
+
     private void SetSetupStatus(string foreground, string text)
     {
-        SetupStatusForeground = foreground;
+        SetupStatusForeground = foreground switch
+        {
+            "#F8E7D6" => "#1F6F4A",
+            "#FFD6D6" => "#B42318",
+            _ => foreground
+        };
         SetupStatusText = text;
     }
 
@@ -5061,6 +7938,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             session.Note = normalizedNote;
             UpdateSessionSearchBlob(session);
             _notesService.SaveNotes(_sessionNotes);
+            ExportSessionsFeedSafe();
 
             if (!string.Equals(SelectedSessionNote, normalizedNote, StringComparison.Ordinal))
             {
@@ -5108,14 +7986,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : $"{session.BaseSearchBlob} {session.Note}";
     }
 
-    private NewSessionLaunchOptions BuildNewSessionLaunchOptions(IReadOnlyList<string>? imagePaths = null)
+    private NewSessionLaunchOptions BuildNewSessionLaunchOptions(
+        IReadOnlyList<string>? imagePaths = null,
+        string? workingDirectoryOverride = null)
     {
         var useDangerousBypass = ShouldUseDangerousBypassForNewSession();
 
         return new NewSessionLaunchOptions
         {
             Prompt = NewSessionPrompt,
-            WorkingDirectory = GetNormalizedNewSessionWorkingDirectory(),
+            WorkingDirectory = workingDirectoryOverride ?? GetNormalizedNewSessionWorkingDirectory(),
             ImagePaths = imagePaths ?? [],
             Model = NewSessionModel,
             Profile = NewSessionProfile,
@@ -5207,9 +8087,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private string GetNormalizedNewSessionWorkingDirectory()
     {
-        return string.IsNullOrWhiteSpace(NewSessionWorkingDirectory)
-            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-            : NewSessionWorkingDirectory.Trim();
+        return NewSessionWorkingDirectory.Trim();
     }
 
     private async Task RefreshDnsAdaptersAsync(bool preserveStatus = true)
@@ -5312,6 +8190,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     SetUpdateStatus("#FFD98C", "UpdateStatusNoInstaller");
                 }
             }
+            else if (snapshot.IsCurrentVersionNewerThanLatest)
+            {
+                SetUpdateStatus(
+                    "#F8E7D6",
+                    "UpdateStatusAheadOfRelease",
+                    snapshot.CurrentVersionDisplay,
+                    snapshot.LatestVersionDisplay);
+            }
             else
             {
                 SetUpdateStatus("#F8E7D6", "UpdateStatusUpToDate", snapshot.CurrentVersionDisplay);
@@ -5387,6 +8273,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(CanInstallBaseComponents));
             OnPropertyChanged(nameof(CanRepairWinget));
             OnPropertyChanged(nameof(CanLaunchNewSession));
+            OnPropertyChanged(nameof(CanStartHomeSession));
             OnPropertyChanged(nameof(CanInstallCodexDesktopApp));
             OnPropertyChanged(nameof(CanOpenCodexDesktopStorePage));
             OnPropertyChanged(nameof(CanLaunchCodexLogin));
@@ -5458,7 +8345,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ApplySetupSnapshot(CodexEnvironmentSnapshot snapshot)
     {
-        RefreshLocalAiModelOptions(snapshot.InstalledOllamaModels);
+        RefreshLocalAiModelOptions(snapshot);
         RefreshCreativeAiToolOptions(snapshot);
         RefreshAiAgentToolOptions(snapshot);
         RefreshOpenClawSetupModes(snapshot);
@@ -5608,6 +8495,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanUninstallOllama));
         OnPropertyChanged(nameof(CanUninstallLmStudio));
         RefreshSetupOverviewBindings();
+
+        if (_beginnerOnboardingInProgress && IsHomeEnvironmentReady)
+        {
+            CompleteBeginnerOnboarding();
+        }
     }
 
     private void RefreshSetupOverviewBindings()
@@ -5623,6 +8515,105 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(SetupCoreSummaryBrush));
         OnPropertyChanged(nameof(SetupCodexSummaryBrush));
         OnPropertyChanged(nameof(SetupLocalAiSummaryBrush));
+        OnPropertyChanged(nameof(IsHomeEnvironmentReady));
+        OnPropertyChanged(nameof(CanStartHomeSession));
+        OnPropertyChanged(nameof(HomeReadinessText));
+        OnPropertyChanged(nameof(HomeReadinessBrush));
+        OnPropertyChanged(nameof(HomeStartHelpText));
+        OnPropertyChanged(nameof(BeginnerSetupLocalAiStatusText));
+        OnPropertyChanged(nameof(BeginnerSetupLocalAiStatusBrush));
+        OnPropertyChanged(nameof(HardwareOverviewText));
+        OnPropertyChanged(nameof(HardwareRecommendationText));
+        OnPropertyChanged(nameof(HardwareStatusBrush));
+        OnPropertyChanged(nameof(LocalAiStorageSummaryText));
+    }
+
+    private string GetHardwareRecommendationText(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return Strings["SetupHardwarePending"];
+        }
+
+        if (snapshot.SystemDriveFreeBytes > 0 && snapshot.SystemDriveFreeBytes < Gibibytes(5))
+        {
+            return Strings["SetupHardwareRecommendationDiskLow"];
+        }
+
+        if (snapshot.TotalPhysicalMemoryBytes > 0 && snapshot.TotalPhysicalMemoryBytes < Gibibytes(8))
+        {
+            return Strings["SetupHardwareRecommendationLight"];
+        }
+
+        if (snapshot.GpuMemoryBytes >= Gibibytes(8))
+        {
+            return Strings["SetupHardwareRecommendationStrong"];
+        }
+
+        if (snapshot.GpuMemoryBytes >= Gibibytes(4))
+        {
+            return Strings["SetupHardwareRecommendationBalanced"];
+        }
+
+        return Strings["SetupHardwareRecommendationCpu"];
+    }
+
+    private static string GetHardwareStatusBrush(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return "#2D5366";
+        }
+
+        if ((snapshot.SystemDriveFreeBytes > 0 && snapshot.SystemDriveFreeBytes < Gibibytes(5)) ||
+            (snapshot.TotalPhysicalMemoryBytes > 0 && snapshot.TotalPhysicalMemoryBytes < Gibibytes(8)))
+        {
+            return "#B42318";
+        }
+
+        return snapshot.GpuMemoryBytes >= Gibibytes(4) ? "#1F7A52" : "#B86E10";
+    }
+
+    private static string GetRecommendedLocalModelTag(CodexEnvironmentSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return "qwen3.5:4b";
+        }
+
+        if ((snapshot.TotalPhysicalMemoryBytes > 0 && snapshot.TotalPhysicalMemoryBytes < Gibibytes(8)) ||
+            (snapshot.SystemDriveFreeBytes > 0 && snapshot.SystemDriveFreeBytes < Gibibytes(5)))
+        {
+            return "qwen3.5:0.8b";
+        }
+
+        if (snapshot.GpuMemoryBytes >= Gibibytes(8) &&
+            snapshot.TotalPhysicalMemoryBytes >= Gibibytes(16) &&
+            snapshot.SystemDriveFreeBytes >= Gibibytes(8))
+        {
+            return "qwen3.5:9b";
+        }
+
+        return "qwen3.5:4b";
+    }
+
+    private static long Gibibytes(double value)
+    {
+        var bytes = value * 1024d * 1024d * 1024d;
+        return bytes >= long.MaxValue ? long.MaxValue : (long)bytes;
+    }
+
+    private static string FormatByteSize(long bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "—";
+        }
+
+        var gibibytes = bytes / (1024d * 1024d * 1024d);
+        return gibibytes >= 0.1
+            ? $"{gibibytes:0.#} GB"
+            : $"{bytes / (1024d * 1024d):0.#} MB";
     }
 
     private string GetSetupSectionProgressText(int readyCount, int totalCount)
@@ -5829,7 +8820,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var accentBrush = isOk
             ? "#1F7A52"
             : isWarning
-                ? "#B86E10"
+                ? "#8A4B08"
                 : "#B42318";
 
         return new SetupCheckItem
@@ -5987,7 +8978,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(SessionsDetailColumnWidth));
         OnPropertyChanged(nameof(NewSessionAsideColumnWidth));
         OnPropertyChanged(nameof(SettingsAsideColumnWidth));
+        OnPropertyChanged(nameof(HomeTitleFontSize));
+        OnPropertyChanged(nameof(HomePromptHeight));
+        OnPropertyChanged(nameof(HomeSafetyColumnWidth));
     }
+
+    private readonly record struct LocalModelSpec(
+        string Name,
+        string ModelTag,
+        string SizeLabel,
+        string Description,
+        double DownloadSizeGiB,
+        double MinimumRamGiB,
+        double RecommendedVramGiB);
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -6004,6 +9007,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private enum SessionHealthLevel
+    {
+        Stable,
+        Long,
+        Overloaded
+    }
+
+    private enum NewSessionAccessLevel
+    {
+        Safe,
+        Caution,
+        Critical
     }
 }
 

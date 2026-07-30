@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -14,9 +15,16 @@ public sealed class AppUpdateService
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/Havermeng/AIHelper/releases/latest";
     private const string LatestReleasePageUrl = "https://github.com/Havermeng/AIHelper/releases/latest";
     private const string ReleaseDownloadUrlTemplate = "https://github.com/Havermeng/AIHelper/releases/download/{0}/AIHelper-Setup.exe";
+    private const string ReleaseChecksumUrlTemplate = "https://github.com/Havermeng/AIHelper/releases/download/{0}/SHA256SUMS.txt";
     private const string SetupAssetName = "AIHelper-Setup.exe";
+    private const string ChecksumAssetName = "SHA256SUMS.txt";
+    private const long MaximumInstallerBytes = 512L * 1024 * 1024;
     private static readonly Regex HtmlTitleRegex =
         new("<title>\\s*(?<title>[^<]+?)\\s*</title>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex InstallerChecksumRegex =
+        new(
+            "^(?<hash>[0-9a-fA-F]{64})\\s+\\*?AIHelper-Setup\\.exe$",
+            RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
 
     private readonly AppLogService _logService = new();
 
@@ -70,13 +78,12 @@ public sealed class AppUpdateService
 
     public async Task DownloadInstallerAsync(
         string installerUrl,
+        string checksumUrl,
         string destinationFilePath,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(installerUrl))
-        {
-            throw new InvalidOperationException("Installer URL is empty.");
-        }
+        ValidateReleaseAssetUrl(installerUrl, SetupAssetName);
+        ValidateReleaseAssetUrl(checksumUrl, ChecksumAssetName);
 
         var directory = Path.GetDirectoryName(destinationFilePath);
         if (!string.IsNullOrWhiteSpace(directory))
@@ -89,20 +96,32 @@ public sealed class AppUpdateService
         try
         {
             using var client = CreateHttpClient();
+            var checksumText = await client.GetStringAsync(checksumUrl, cancellationToken);
+            var expectedChecksum = ParseInstallerChecksum(checksumText);
             using var response = await client.GetAsync(
                 installerUrl,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
             response.EnsureSuccessStatusCode();
 
+            if (response.Content.Headers.ContentLength is > MaximumInstallerBytes)
+            {
+                throw new InvalidDataException("The update installer is unexpectedly large.");
+            }
+
             await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
             await using (var output = File.Create(tempFilePath))
             {
-                await input.CopyToAsync(output, cancellationToken);
+                await CopyWithLimitAsync(input, output, MaximumInstallerBytes, cancellationToken);
             }
 
+            await VerifyInstallerChecksumAsync(tempFilePath, expectedChecksum, cancellationToken);
+            await VerifyInstallerSignatureAsync(tempFilePath, cancellationToken);
+
             File.Move(tempFilePath, destinationFilePath, overwrite: true);
-            _logService.Info(nameof(AppUpdateService), $"Downloaded installer to {destinationFilePath}.");
+            _logService.Info(
+                nameof(AppUpdateService),
+                $"Downloaded installer with valid SHA-256 and Authenticode signature to {destinationFilePath}.");
         }
         catch (Exception exception)
         {
@@ -130,6 +149,15 @@ public sealed class AppUpdateService
             throw new FileNotFoundException("Installer file was not found.", installerFilePath);
         }
 
+        if ((File.GetAttributes(installerFilePath) & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidDataException("The update installer cannot be launched through a symbolic link or reparse point.");
+        }
+
+        VerifyInstallerSignatureAsync(installerFilePath, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
         if (string.IsNullOrWhiteSpace(currentExecutablePath))
         {
             currentExecutablePath = Environment.ProcessPath ?? string.Empty;
@@ -140,29 +168,27 @@ public sealed class AppUpdateService
             throw new InvalidOperationException("Current executable path is empty.");
         }
 
-        var updatesDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "AIHelper",
-            "updates");
-        Directory.CreateDirectory(updatesDirectory);
-
-        var scriptPath = Path.Combine(updatesDirectory, "install-update-silent.ps1");
         var script = BuildSilentInstallScript(installerFilePath, currentExecutablePath);
-        File.WriteAllText(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var encodedCommand = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
 
-        Process.Start(
-            new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{scriptPath}\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            });
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-WindowStyle");
+        startInfo.ArgumentList.Add("Hidden");
+        startInfo.ArgumentList.Add("-EncodedCommand");
+        startInfo.ArgumentList.Add(encodedCommand);
+        Process.Start(startInfo);
 
         _logService.Info(
             nameof(AppUpdateService),
-            $"Started silent update installer. Installer={installerFilePath}; Script={scriptPath}; RestartExe={currentExecutablePath}");
+            $"Started verified silent update installer. Installer={installerFilePath}; RestartExe={currentExecutablePath}");
     }
 
     private static HttpClient CreateHttpClient()
@@ -208,8 +234,10 @@ public sealed class AppUpdateService
             ReleaseTitle = ReadString(root, "name"),
             ReleasePageUrl = string.IsNullOrWhiteSpace(releasePageUrl) ? LatestReleasePageUrl : releasePageUrl,
             InstallerDownloadUrl = GetInstallerDownloadUrl(root),
+            InstallerChecksumUrl = GetAssetDownloadUrl(root, ChecksumAssetName),
             PublishedAtUtc = ReadDateTimeOffset(root, "published_at"),
-            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0
+            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0,
+            IsCurrentVersionNewerThanLatest = CompareVersions(currentVersion, latestVersion) > 0
         };
 
         _logService.Info(
@@ -253,8 +281,10 @@ public sealed class AppUpdateService
             ReleaseTitle = string.IsNullOrWhiteSpace(releaseTitle) ? releaseTag : releaseTitle,
             ReleasePageUrl = resolvedUrl,
             InstallerDownloadUrl = string.Format(ReleaseDownloadUrlTemplate, releaseTag),
+            InstallerChecksumUrl = string.Format(ReleaseChecksumUrlTemplate, releaseTag),
             PublishedAtUtc = null,
-            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0
+            IsUpdateAvailable = CompareVersions(currentVersion, latestVersion) < 0,
+            IsCurrentVersionNewerThanLatest = CompareVersions(currentVersion, latestVersion) > 0
         };
     }
 
@@ -291,6 +321,11 @@ public sealed class AppUpdateService
 
     private static string GetInstallerDownloadUrl(JsonElement root)
     {
+        return GetAssetDownloadUrl(root, SetupAssetName);
+    }
+
+    private static string GetAssetDownloadUrl(JsonElement root, string assetName)
+    {
         if (!root.TryGetProperty("assets", out var assetsElement) || assetsElement.ValueKind != JsonValueKind.Array)
         {
             return string.Empty;
@@ -298,24 +333,126 @@ public sealed class AppUpdateService
 
         foreach (var asset in assetsElement.EnumerateArray())
         {
-            var name = ReadString(asset, "name");
-            if (string.Equals(name, SetupAssetName, StringComparison.OrdinalIgnoreCase))
-            {
-                return ReadString(asset, "browser_download_url");
-            }
-        }
-
-        foreach (var asset in assetsElement.EnumerateArray())
-        {
-            var name = ReadString(asset, "name");
-            if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
-                name.Contains("setup", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(ReadString(asset, "name"), assetName, StringComparison.OrdinalIgnoreCase))
             {
                 return ReadString(asset, "browser_download_url");
             }
         }
 
         return string.Empty;
+    }
+
+    private static void ValidateReleaseAssetUrl(string url, string expectedAssetName)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps ||
+            !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) ||
+            !uri.AbsolutePath.StartsWith("/Havermeng/AIHelper/releases/download/", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(
+                Path.GetFileName(Uri.UnescapeDataString(uri.AbsolutePath)),
+                expectedAssetName,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Unexpected update asset URL for {expectedAssetName}.");
+        }
+    }
+
+    private static string ParseInstallerChecksum(string checksumText)
+    {
+        var match = InstallerChecksumRegex.Match(checksumText ?? string.Empty);
+        if (!match.Success)
+        {
+            throw new InvalidDataException("The release checksum file does not contain AIHelper-Setup.exe.");
+        }
+
+        return match.Groups["hash"].Value;
+    }
+
+    private static async Task CopyWithLimitAsync(
+        Stream input,
+        Stream output,
+        long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[81920];
+        long totalBytes = 0;
+
+        while (true)
+        {
+            var bytesRead = await input.ReadAsync(buffer, cancellationToken);
+            if (bytesRead == 0)
+            {
+                return;
+            }
+
+            totalBytes += bytesRead;
+            if (totalBytes > maximumBytes)
+            {
+                throw new InvalidDataException("The update installer exceeded the allowed size.");
+            }
+
+            await output.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+        }
+    }
+
+    private static async Task VerifyInstallerChecksumAsync(
+        string filePath,
+        string expectedChecksum,
+        CancellationToken cancellationToken)
+    {
+        var expectedHash = Convert.FromHexString(expectedChecksum);
+        await using var stream = File.OpenRead(filePath);
+        var actualHash = await SHA256.HashDataAsync(stream, cancellationToken);
+
+        if (!CryptographicOperations.FixedTimeEquals(expectedHash, actualHash))
+        {
+            throw new InvalidDataException("The downloaded installer failed SHA-256 verification.");
+        }
+    }
+
+    private static async Task VerifyInstallerSignatureAsync(
+        string filePath,
+        CancellationToken cancellationToken)
+    {
+        const string signaturePathEnvironmentVariable = "AIHELPER_SIGNATURE_PATH";
+        const string signatureCheckScript =
+            "$signature = Get-AuthenticodeSignature -LiteralPath $env:AIHELPER_SIGNATURE_PATH; " +
+            "if ($signature.Status -ne 'Valid') { " +
+            "  [Console]::Error.WriteLine(('Signature status: {0}. {1}' -f $signature.Status, $signature.StatusMessage)); " +
+            "  exit 23 " +
+            "}; " +
+            "[Console]::Out.WriteLine($signature.SignerCertificate.Thumbprint)";
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        startInfo.Environment[signaturePathEnvironmentVariable] = Path.GetFullPath(filePath);
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-Command");
+        startInfo.ArgumentList.Add(signatureCheckScript);
+
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+        {
+            throw new InvalidDataException(
+                string.IsNullOrWhiteSpace(stderr)
+                    ? "The downloaded installer does not have a valid Authenticode signature."
+                    : $"The downloaded installer signature is not trusted: {stderr.Trim()}");
+        }
     }
 
     private static string ReadString(JsonElement element, string propertyName)
